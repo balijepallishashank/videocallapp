@@ -1,24 +1,29 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import LoginPage, { type FacultyRegistrationDetails } from './components/LoginPage'
 import type { UserRole } from './components/LoginPage'
 import Toast from './components/Toast'
 import SettingsPage from './components/SettingsPage'
-import CalendarIntegration, { type ScheduledMeeting } from './components/CalendarIntegration'
-import MeetingHistory, { type MeetingRecord } from './components/MeetingHistory'
+import type { ScheduledMeeting } from './components/CalendarIntegration'
+import type { MeetingRecord } from './components/MeetingHistory'
 import { NotificationBell, NotificationPanel } from './components/NotificationsSystem'
 import { EmptyState, EmptyStateContainer, NoMeetingHistoryEmptyState } from './components/EmptyStates'
 import { CalendarDays, Download, FileText } from 'lucide-react'
-import HierarchicalSidebar, { 
-  type AcademicNavItem,
-  type AcademicFacultyRoot,
-  type AcademicSection,
-  type StudentRecord,
-} from './components/HierarchicalSidebar.tsx'
-import type { FacultyProfile } from './components/AcademicStructure.tsx'
-import FacultyStudentDashboard from './components/FacultyStudentDashboard'
-import AcademicStructure from './components/AcademicStructure.tsx'
-import MeetingRoom from './components/MeetingRoom'
-import StudentSelectionModal from './components/StudentSelectionModal'
+import type {
+  AcademicNavItem,
+  AcademicFacultyRoot,
+  AcademicSection,
+  StudentRecord,
+} from './components/HierarchicalSidebar'
+import type { FacultyProfile } from './components/AcademicStructure'
+
+// Lazy-load heavier UI areas to improve initial bundle size and performance
+const HierarchicalSidebar = lazy(() => import('./components/HierarchicalSidebar'))
+const FacultyStudentDashboard = lazy(() => import('./components/FacultyStudentDashboard'))
+const AcademicStructure = lazy(() => import('./components/AcademicStructure'))
+const MeetingRoom = lazy(() => import('./components/MeetingRoom'))
+const StudentSelectionModal = lazy(() => import('./components/StudentSelectionModal'))
+const CalendarIntegration = lazy(() => import('./components/CalendarIntegration'))
+const MeetingHistory = lazy(() => import('./components/MeetingHistory'))
 
 interface ToastItem {
   id: string
@@ -697,7 +702,8 @@ function App() {
   // If in a meeting, show meeting room
   if (currentMeeting) {
     return (
-      <MeetingRoom
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading meeting…</div>}>
+        <MeetingRoom
         meetingId={currentMeeting.id}
         meetingTitle={currentMeeting.title}
         participants={[]}
@@ -712,7 +718,8 @@ function App() {
         onToggleAttendance={handleToggleAttendance}
         onEndMeeting={handleEndMeeting}
         onInviteParticipants={() => addToast('Invite panel opened', 'info')}
-      />
+        />
+      </Suspense>
     )
   }
 
@@ -849,12 +856,14 @@ function App() {
         ☰
       </button>
 
-      <HierarchicalSidebar
-        isOpen={sidebarOpen}
-        selected={selectedNav}
-        onSelect={setSelectedNav}
-        userRole={currentUser?.role || 'student'}
-      />
+      <Suspense fallback={null}>
+        <HierarchicalSidebar
+          isOpen={sidebarOpen}
+          selected={selectedNav}
+          onSelect={setSelectedNav}
+          userRole={currentUser?.role || 'student'}
+        />
+      </Suspense>
 
       <main
         className="min-h-screen"
@@ -863,7 +872,8 @@ function App() {
         <div className="p-6 md:p-10 pt-16">
           <div className="max-w-7xl mx-auto">
             {selectedNav === 'dashboard' && (
-              <FacultyStudentDashboard 
+              <Suspense fallback={<div className="p-6">Loading dashboard…</div>}>
+                <FacultyStudentDashboard 
                 role={currentUser?.role === 'faculty' ? 'faculty' : 'student'} 
                 onQuickStartMeeting={handleQuickStartMeeting}
                 onNavigate={(nav) => setSelectedNav(nav as AcademicNavItem)}
@@ -909,11 +919,13 @@ function App() {
                 }))}
                 onUpdateDoubtRequestStatus={handleUpdateDoubtRequestStatus}
                 onRequestDoubtSession={handleRequestDoubtSession}
-              />
+                />
+              </Suspense>
             )}
 
             {selectedNav === 'academic-structure' && currentUser?.role === 'faculty' && (
-              <AcademicStructure
+              <Suspense fallback={<div className="p-6">Loading structure…</div>}>
+                <AcademicStructure
                 facultyRoot={academicRoot}
                 facultyProfile={currentUser?.facultyProfile}
                 role={currentUser?.role === 'faculty' ? 'faculty' : 'student'}
@@ -951,7 +963,8 @@ function App() {
                 onSendMessageToStudent={(student: StudentRecord) => addToast(`Message sent to ${student.name}.`, 'success')}
                 onViewStudentProfile={(student: StudentRecord) => addToast(`Viewing profile: ${student.name} (${student.id})`, 'info')}
                 onAcademicRootChange={(updatedDepts) => setAcademicRoot((prev) => ({ ...prev, departments: updatedDepts }))}
-              />
+                />
+              </Suspense>
             )}
 
             {selectedNav === 'meetings' && currentUser?.role === 'faculty' && (
@@ -960,13 +973,15 @@ function App() {
                 <div className="space-y-4">
                   {currentUser?.role === 'faculty' && (
                     <>
-                      <CalendarIntegration
+                      <Suspense fallback={<div className="p-4">Loading calendar…</div>}>
+                        <CalendarIntegration
                         meetings={scheduledMeetings}
                         onSchedule={handleScheduleMeeting}
                         onEdit={() => {}}
                         onDelete={handleDeleteScheduledMeeting}
                         onToast={addToast}
-                      />
+                        />
+                      </Suspense>
 
                       <div className="text-slate-400 text-sm">
                         Start a meeting by clicking the video icon next to any section in the Academic Structure.
@@ -1085,7 +1100,9 @@ function App() {
                     <NoMeetingHistoryEmptyState />
                   </EmptyStateContainer>
                 ) : (
-                  <MeetingHistory meetings={meetingHistory} onPlayRecording={handlePlayRecording} />
+                  <Suspense fallback={<div className="p-4">Loading history…</div>}>
+                    <MeetingHistory meetings={meetingHistory} onPlayRecording={handlePlayRecording} />
+                  </Suspense>
                 )}
               </div>
             )}
@@ -1135,15 +1152,17 @@ function App() {
 
       {/* Student Selection Modal */}
       {showStudentSelection && selectedSection && (
-        <StudentSelectionModal
-          isOpen={showStudentSelection}
-          onClose={() => {
-            setShowStudentSelection(false)
-            setSelectedSection(null)
-          }}
-          section={selectedSection}
-          onStartMeeting={handleStudentSelectionComplete}
-        />
+        <Suspense fallback={<div className="fixed inset-0 z-[60] flex items-center justify-center">Loading…</div>}>
+          <StudentSelectionModal
+            isOpen={showStudentSelection}
+            onClose={() => {
+              setShowStudentSelection(false)
+              setSelectedSection(null)
+            }}
+            section={selectedSection}
+            onStartMeeting={handleStudentSelectionComplete}
+          />
+        </Suspense>
       )}
 
       {postMeetingRecord && (
