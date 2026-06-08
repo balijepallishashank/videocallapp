@@ -137,14 +137,6 @@ const normalizeBranches = (root: AcademicFacultyRoot): BranchNode[] => {
     const bucket = new Map<number, AcademicStudent[]>()
     for (let year = 1; year <= 4; year += 1) bucket.set(year, [])
 
-    department.years?.forEach((year) => {
-      const current = bucket.get(year.yearNumber) || []
-      year.students.forEach((student) => {
-        current.push(mapStudentRecord(student, department.id, Math.min(4, Math.max(1, year.yearNumber))))
-      })
-      bucket.set(year.yearNumber, current)
-    })
-
     department.branches?.forEach((branch) => {
       branch.sections.forEach((section) => {
         section.students.forEach((student) => {

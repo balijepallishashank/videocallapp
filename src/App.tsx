@@ -467,24 +467,17 @@ function App() {
 
   const getFirstAvailableSection = (): AcademicSection | null => {
     for (const department of academicRoot.departments) {
-      const firstYear = department.years?.find((year: { students: StudentRecord[] }) => year.students.length > 0)
-      if (firstYear) {
-        return {
-          id: `${department.id}_year_${firstYear.yearNumber}`,
-          name: `${department.name} - Year ${firstYear.yearNumber}`,
-          students: firstYear.students,
-          subject: `${department.name} Year ${firstYear.yearNumber}`,
-          departmentName: department.name,
-          yearNumber: firstYear.yearNumber,
+      if (department.branches && department.branches.length > 0) {
+        for (const branch of department.branches) {
+          if (branch.sections && branch.sections.length > 0) {
+            const section = branch.sections[0]
+            if (section.students && section.students.length > 0) {
+              return section
+            }
+          }
         }
       }
-
-      const firstLegacySection = department.branches?.[0]?.sections?.[0]
-      if (firstLegacySection) {
-        return firstLegacySection
-      }
     }
-
     return null
   }
 
