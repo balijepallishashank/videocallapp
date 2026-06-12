@@ -803,7 +803,7 @@ export default function MeetingRoom({
 
         {/* Enhanced Side Panel */}
         {(showParticipants || showChat || (currentUser.role === 'faculty' && showSpeakingQueue) || showToolPanel !== null) && (
-          <div className="w-80 bg-slate-900/90 backdrop-blur-sm border-l border-white/10 flex flex-col">
+          <div className="w-72 sm:w-80 md:w-96 bg-slate-900/90 backdrop-blur-sm border-l border-white/10 flex flex-col">
             {/* Tab Headers */}
             <div className="flex border-b border-white/10">
               {showParticipants && (
@@ -937,7 +937,7 @@ export default function MeetingRoom({
                       return (
                       <div 
                         key={participant.id} 
-                        className={`flex items-center justify-between p-3 rounded-lg hover:bg-white/5 transition-colors group cursor-pointer ${
+                        className={`flex items-center justify-between p-3 rounded-lg min-w-0 hover:bg-white/5 transition-colors group cursor-pointer ${
                           isInQueue ? 'bg-yellow-500/10 border border-yellow-400/30' : ''
                         }`}
                         onClick={() => setFullscreenParticipant(participant.id)}
@@ -979,7 +979,7 @@ export default function MeetingRoom({
                           </div>
                         </div>
                         
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-shrink-0">
                           {/* Audio/Video Status */}
                           <div className="flex items-center gap-1">
                             {!participant.isMuted ? (

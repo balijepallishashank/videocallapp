@@ -25,7 +25,17 @@ export default function VirtualBackgrounds({ onToast }: VirtualBackgroundsProps)
 
   const applyBackground = (backgroundId: string) => {
     setSelectedBackground(backgroundId)
-    
+    // persist selection on document and notify listeners so MeetingRoom can apply it
+    try {
+      document.documentElement.setAttribute('data-vc-bg', backgroundId)
+    } catch (e) {
+      // ignore in non-browser environments
+    }
+
+    window.dispatchEvent(new CustomEvent('vc:bg-changed', {
+      detail: { id: backgroundId, blur: blurIntensity, url: customBackground }
+    }))
+
     if (backgroundId === 'none') {
       onToast('Background removed', 'info')
     } else if (backgroundId === 'blur') {
@@ -49,6 +59,9 @@ export default function VirtualBackgrounds({ onToast }: VirtualBackgroundsProps)
       const url = e.target?.result as string
       setCustomBackground(url)
       setSelectedBackground('custom')
+      // notify listeners of custom background
+      try { document.documentElement.setAttribute('data-vc-bg', 'custom') } catch (e) {}
+      window.dispatchEvent(new CustomEvent('vc:bg-changed', { detail: { id: 'custom', blur: blurIntensity, url } }))
       onToast('Custom background uploaded!', 'success')
     }
     reader.readAsDataURL(file)
