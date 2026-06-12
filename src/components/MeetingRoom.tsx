@@ -136,6 +136,10 @@ export default function MeetingRoom({
         }))
       : [],
   )
+
+  // Virtual background state: listens for selections from the VirtualBackgrounds panel
+  const [virtualBg, setVirtualBg] = useState<{ id: string; blur?: number; url?: string }>({ id: 'none' })
+
   const [controlsVisible, setControlsVisible] = useState(true)
   const controlHideTimer = useRef<number | null>(null)
 
@@ -257,7 +261,18 @@ export default function MeetingRoom({
     }
 
     window.addEventListener('reactionSent', handleReactionEvent)
-    return () => window.removeEventListener('reactionSent', handleReactionEvent)
+
+    const handleBg = (e: Event) => {
+      const ev = e as CustomEvent<{ id: string; blur?: number; url?: string }>
+      setVirtualBg({ id: ev.detail?.id || 'none', blur: ev.detail?.blur, url: ev.detail?.url })
+    }
+
+    window.addEventListener('vc:bg-changed', handleBg)
+
+    return () => {
+      window.removeEventListener('reactionSent', handleReactionEvent)
+      window.removeEventListener('vc:bg-changed', handleBg)
+    }
   }, [])
 
   // Format meeting duration
@@ -635,8 +650,8 @@ export default function MeetingRoom({
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Enhanced Video Area */}
-        <div className="flex-1 p-4 relative">
+        {/* Videos/Main Area - Flexible width based on whiteboard state */}
+        <div className={`${showToolPanel === 'whiteboard' ? 'w-64 sm:w-72' : 'flex-1'} p-4 relative border-r border-white/10 transition-all duration-300`}>
           {/* Screen sharing indicator */}
           {isScreenSharing && (
             <div className="absolute top-6 left-1/2 transform -translate-x-1/2 bg-blue-500/90 text-white px-4 py-2 rounded-lg text-sm font-medium z-10 backdrop-blur-sm">
@@ -646,6 +661,7 @@ export default function MeetingRoom({
           
           <div className={`h-full ${fullscreenParticipant ? 'grid grid-cols-1' : viewMode === 'grid' ? 'grid gap-3' : 'flex flex-col gap-4'} ${
             fullscreenParticipant ? '' :
+            showToolPanel === 'whiteboard' ? 'grid-cols-1' :
             allParticipants.length <= 1 ? 'grid-cols-1' :
             allParticipants.length <= 4 ? 'grid-cols-2' :
             allParticipants.length <= 6 ? 'grid-cols-2 md:grid-cols-3' :
@@ -659,7 +675,9 @@ export default function MeetingRoom({
               return (
                 <div
                   className={`relative bg-slate-900 rounded-lg overflow-hidden ${
-                    fullscreenParticipant ? 'h-full' : viewMode === 'speaker' && index === 0 ? 'flex-1' : viewMode === 'speaker' && index > 0 ? 'h-24 flex-shrink-0' : ''
+                    fullscreenParticipant ? 'h-full' : 
+                    showToolPanel === 'whiteboard' ? 'aspect-video' :
+                    viewMode === 'speaker' && index === 0 ? 'flex-1' : viewMode === 'speaker' && index > 0 ? 'h-24 flex-shrink-0' : ''
                   } group hover:ring-2 hover:ring-blue-400/50 transition-all duration-200 cursor-pointer ${
                     participant.isHost ? 'ring-1 ring-emerald-400/30' : ''
                   } ${isInQueue ? 'ring-2 ring-yellow-400/60 animate-pulse' : ''}`}
@@ -668,13 +686,34 @@ export default function MeetingRoom({
                   {participant.isVideoOn ? (
                     <div className="w-full h-full relative">
                       {participant.id === currentUser.id && participant.stream ? (
-                        <video
-                          ref={participant.id === currentUser.id ? videoRef : undefined}
-                          autoPlay
-                          muted
-                          playsInline
-                          className="w-full h-full object-cover scale-x-[-1]"
-                        />
+                        <div className="w-full h-full relative">
+                          {/* Background layer for selected virtual backgrounds (image/gradient) */}
+                          {virtualBg.id && virtualBg.id !== 'none' && virtualBg.id !== 'blur' && (
+                            <div
+                              className="absolute inset-0 bg-cover bg-center"
+                              style={{
+                                backgroundImage: virtualBg.id === 'custom' ? `url(${virtualBg.url})` : undefined,
+                                background: virtualBg.id !== 'custom' ? (
+                                  virtualBg.id === 'office' ? 'linear-gradient(135deg,#0f172a 0%,#0b1220 100%)' :
+                                  virtualBg.id === 'nature' ? 'linear-gradient(135deg,#065f46 0%,#0b3b6b 100%)' :
+                                  virtualBg.id === 'abstract' ? 'linear-gradient(135deg,#6d28d9 0%,#be185d 100%)' :
+                                  virtualBg.id === 'space' ? 'linear-gradient(135deg,#0f172a 0%,#1e1b4b 100%)' :
+                                  undefined
+                                ) : undefined,
+                                filter: virtualBg.id === 'blur' ? `blur(${virtualBg.blur ?? 8}px)` : undefined,
+                              }}
+                            />
+                          )}
+
+                          <video
+                            ref={participant.id === currentUser.id ? videoRef : undefined}
+                            autoPlay
+                            muted
+                            playsInline
+                            className={`w-full h-full object-cover scale-x-[-1] relative z-10`}
+                            style={virtualBg.id === 'blur' ? { filter: `blur(${virtualBg.blur ?? 8}px)` } : undefined}
+                          />
+                        </div>
                       ) : (
                         <div className="w-full h-full bg-gradient-to-br from-slate-700 via-slate-800 to-slate-900 flex items-center justify-center relative">
                           <div className={`rounded-full bg-slate-600/80 flex items-center justify-center backdrop-blur-sm border border-slate-500/50 ${
@@ -801,9 +840,9 @@ export default function MeetingRoom({
           </div>
         </div>
 
-        {/* Enhanced Side Panel */}
+        {/* Tool Panel / Participants / Chat - Flexible width based on whiteboard state */}
         {(showParticipants || showChat || (currentUser.role === 'faculty' && showSpeakingQueue) || showToolPanel !== null) && (
-          <div className="w-72 sm:w-80 md:w-96 bg-slate-900/90 backdrop-blur-sm border-l border-white/10 flex flex-col">
+          <div className={`${showToolPanel === 'whiteboard' ? 'flex-1' : 'w-72 sm:w-80 md:w-96'} bg-slate-900/90 backdrop-blur-sm border-l border-white/10 flex flex-col transition-all duration-300`}>
             {/* Tab Headers */}
             <div className="flex border-b border-white/10">
               {showParticipants && (
