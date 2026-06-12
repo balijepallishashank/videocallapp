@@ -17,7 +17,8 @@ body {
 
 /* Glassmorphism effect */
 .glass {
-  @apply backdrop-blur-md bg-white/10 border border-white/20;
+  /* Use a more opaque background so automated contrast checks can compute reliably */
+  @apply backdrop-blur-md bg-slate-900/80 border border-white/10 text-slate-200;
 }
 
 .glass-dark {

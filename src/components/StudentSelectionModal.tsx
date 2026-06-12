@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { X, Users, UserCheck, UserPlus, Video, Check } from 'lucide-react'
+import IconButton from './IconButton'
 import type { StudentRecord, AcademicSection } from './HierarchicalSidebar'
 
 interface StudentSelectionModalProps {
@@ -94,12 +95,9 @@ export default function StudentSelectionModal({
               Select students to invite to the meeting
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors"
-          >
+          <IconButton onClick={onClose} ariaLabel="Close student selection dialog" className="p-2 text-slate-400">
             <X className="w-5 h-5" />
-          </button>
+          </IconButton>
         </div>
 
         <div className="p-6 overflow-y-auto flex-1">
@@ -227,6 +225,7 @@ export default function StudentSelectionModal({
                             <button
                               onClick={() => toggleStudent(student.id)}
                               className="p-1 hover:bg-red-500/20 rounded text-red-400 hover:text-red-300 transition-colors"
+                              aria-label={`Remove ${student.name} from selection`}
                             >
                               <X className="w-4 h-4" />
                             </button>

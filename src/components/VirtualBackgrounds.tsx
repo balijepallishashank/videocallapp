@@ -71,6 +71,7 @@ export default function VirtualBackgrounds({ onToast }: VirtualBackgroundsProps)
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => applyBackground(bg.id)}
+            aria-label={`Select ${bg.name} background`}
             className={`relative h-16 rounded-lg overflow-hidden transition-all ${
               bg.gradient ? `bg-gradient-to-br ${bg.gradient}` : 'bg-slate-800'
             } ${

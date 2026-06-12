@@ -72,6 +72,7 @@ export default function Reactions({
               : 'glass-dark text-slate-300 hover:text-white'
           }`}
           title="Reactions"
+          aria-label="Open reactions"
         >
           <Smile className="w-5 h-5" />
         </motion.button>
@@ -87,6 +88,7 @@ export default function Reactions({
               : 'glass-dark text-slate-300 hover:text-white'
           }`}
           title={isHandRaised ? 'Lower hand' : 'Raise hand'}
+          aria-label={isHandRaised ? 'Lower hand' : 'Raise hand'}
         >
           <Hand className="w-5 h-5" />
           {handRaisedParticipants.length > 0 && (
@@ -120,6 +122,7 @@ export default function Reactions({
               <button
                 onClick={() => setShowReactions(false)}
                 className="text-slate-400 hover:text-white transition"
+                aria-label="Close reactions panel"
               >
                 <X className="w-4 h-4" />
               </button>

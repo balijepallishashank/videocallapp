@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Mail, Lock, Eye, EyeOff, Sparkles } from 'lucide-react'
+import IconButton from './IconButton'
 
 export type UserRole = 'faculty' | 'student'
 
@@ -111,7 +112,7 @@ export default function LoginPage({ onLogin, onRegisterFaculty }: LoginPageProps
   }
 
   return (
-    <div className="w-full min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-start md:items-center justify-center relative overflow-x-hidden overflow-y-auto p-4 md:py-8">
+    <main role="main" aria-label="Login" className="w-full min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-start md:items-center justify-center relative overflow-x-hidden overflow-y-auto p-4 md:py-8">
       {/* Animated Background */}
       <div className="absolute inset-0 overflow-hidden">
         <motion.div
@@ -354,17 +355,14 @@ export default function LoginPage({ onLogin, onRegisterFaculty }: LoginPageProps
                   placeholder="••••••••"
                   className="w-full pl-10 pr-10 py-3 rounded-lg bg-slate-800/50 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all"
                 />
-                <button
+                <IconButton
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
+                  ariaLabel={showPassword ? 'Hide password' : 'Show password'}
                   className="absolute right-3 top-3.5 text-slate-400 hover:text-slate-300 transition-colors"
                 >
-                  {showPassword ? (
-                    <EyeOff className="w-5 h-5" />
-                  ) : (
-                    <Eye className="w-5 h-5" />
-                  )}
-                </button>
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </IconButton>
               </div>
             </div>
 
@@ -478,6 +476,6 @@ export default function LoginPage({ onLogin, onRegisterFaculty }: LoginPageProps
           </button>
         </motion.p>
       </motion.div>
-    </div>
+    </main>
   )
 }

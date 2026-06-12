@@ -867,6 +867,8 @@ function App() {
 
       <main
         className="min-h-screen"
+        role="main"
+        aria-label="Main content"
         style={{ marginLeft: sidebarOpen ? '320px' : '0px', transition: 'margin-left 0.22s ease-in-out' }}
       >
         <div className="p-6 md:p-10 pt-16">

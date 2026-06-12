@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Bell, CheckCircle, AlertCircle, Info, X } from 'lucide-react'
+import IconButton from './IconButton'
 import { EmptyState } from './EmptyStates'
 
 // Browser notification service
@@ -139,14 +140,9 @@ function NotificationItem({
             </motion.button>
           )}
         </div>
-        <motion.button
-          whileHover={{ scale: 1.2 }}
-          whileTap={{ scale: 0.9 }}
-          onClick={onDismiss}
-          className="text-slate-400 hover:text-slate-200 flex-shrink-0"
-        >
-          <X className="w-4 h-4" />
-        </motion.button>
+          <IconButton onClick={onDismiss} ariaLabel="Dismiss notification" className="text-slate-400 hover:text-slate-200 flex-shrink-0 p-2">
+            <X className="w-4 h-4" />
+          </IconButton>
       </div>
     </motion.div>
   )
@@ -328,19 +324,17 @@ export function NotificationPanel({
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 100 }}
             className="fixed right-0 top-0 h-full w-80 glass border-l border-slate-700/50 p-4 z-50 overflow-y-auto"
+            role="region"
+            aria-label="Notifications panel"
           >
             <div className="flex items-center justify-between mb-4 gap-3">
               <div>
                 <h3 className="text-lg font-bold text-white">Notifications</h3>
                 <p className="text-xs text-slate-400 mt-1">Meeting invites, reminders, and recent activity appear here.</p>
               </div>
-              <motion.button
-                whileHover={{ scale: 1.2 }}
-                onClick={onClose}
-                className="text-slate-400 hover:text-slate-200"
-              >
+              <IconButton onClick={onClose} ariaLabel="Close notifications panel" className="text-slate-400 p-2">
                 ✕
-              </motion.button>
+              </IconButton>
             </div>
 
             {notifications.length === 0 ? (
