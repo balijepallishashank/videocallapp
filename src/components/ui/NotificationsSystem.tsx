@@ -10,7 +10,6 @@ export function useBrowserNotification() {
 
   const requestPermission = async () => {
     if (!('Notification' in window)) {
-      console.log('Notifications not supported')
       return false
     }
 
