@@ -13,6 +13,7 @@ interface VideoContainerProps {
   videoStream: MediaStream | null
   participants?: Participant[]
   isFullscreen?: boolean
+  isCaptionsOn?: boolean
 }
 
 export default function VideoContainer({
@@ -21,9 +22,28 @@ export default function VideoContainer({
   videoStream,
   participants = [],
   isFullscreen = false,
+  isCaptionsOn = false,
 }: VideoContainerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [error, setError] = useState<string | null>(null)
+  const [captionIndex, setCaptionIndex] = useState(0)
+
+  // Simulated Live Closed Captions
+  const dummyCaptions = [
+    "Welcome everyone to today's lecture.",
+    "Let's review the assignments from last week.",
+    "Does anyone have questions about the reading?",
+    "We will be covering WebRTC basics today.",
+    "As you can see on the shared screen..."
+  ]
+
+  useEffect(() => {
+    if (!isCaptionsOn) return
+    const interval = setInterval(() => {
+      setCaptionIndex(i => (i + 1) % dummyCaptions.length)
+    }, 4000)
+    return () => clearInterval(interval)
+  }, [isCaptionsOn])
 
   // Display video stream when available
   useEffect(() => {
@@ -115,6 +135,17 @@ export default function VideoContainer({
               </motion.div>
             ))}
           </div>
+        )}
+
+        {/* Live Closed Captions Overlay */}
+        {isCaptionsOn && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="absolute bottom-16 left-1/2 transform -translate-x-1/2 max-w-[80%] bg-black/70 backdrop-blur-md text-white px-6 py-3 rounded-xl text-center text-lg lg:text-xl font-medium shadow-2xl z-30 border border-white/10"
+          >
+            {dummyCaptions[captionIndex]}
+          </motion.div>
         )}
 
         {/* Audio Waveform Bar - Bottom edge */}

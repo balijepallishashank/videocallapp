@@ -190,7 +190,7 @@ export default function HomePage({
   ]
 
   return (
-    <div className="w-full h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 overflow-auto relative">
+    <div className="w-full h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 overflow-x-hidden overflow-y-auto relative">
       {/* Animated gradient background elements */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div className="absolute w-96 h-96 bg-gradient-to-r from-blue-500/30 to-purple-500/30 rounded-full blur-3xl -top-20 -left-20 animate-pulse" />

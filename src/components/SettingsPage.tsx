@@ -592,7 +592,11 @@ export default function SettingsPage({ onBack, initialTab = 'profile' }: Setting
         label="Dark Mode"
         description="Use dark theme (currently enabled)"
         value={settings.darkMode}
-        onChange={(val) => handleSettingChange('darkMode', val)}
+        onChange={(val) => {
+          handleSettingChange('darkMode', val);
+          if (val) document.documentElement.classList.add('dark');
+          else document.documentElement.classList.remove('dark');
+        }}
       />
 
       <div>

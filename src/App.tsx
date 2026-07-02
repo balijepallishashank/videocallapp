@@ -1,9 +1,9 @@
-import { useEffect, useState, lazy, Suspense } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
 import LoginPage, { type FacultyRegistrationDetails } from './components/LoginPage'
 import type { UserRole } from './components/LoginPage'
 import Toast from './components/Toast'
 import SettingsPage from './components/SettingsPage'
-import type { ScheduledMeeting } from './components/CalendarIntegration'
+import type { AcademicMeetingTarget, ScheduledMeeting } from './components/CalendarIntegration'
 import type { MeetingRecord } from './components/MeetingHistory'
 import { NotificationBell, NotificationPanel } from './components/NotificationsSystem'
 import { EmptyState, EmptyStateContainer, NoMeetingHistoryEmptyState } from './components/EmptyStates'
@@ -13,6 +13,7 @@ import type {
   AcademicFacultyRoot,
   AcademicSection,
   StudentRecord,
+  AcademicDepartment,
 } from './components/HierarchicalSidebar'
 import type { FacultyProfile } from './components/AcademicStructure'
 
@@ -248,9 +249,61 @@ function App() {
   const [academicRoot, setAcademicRoot] = useState<AcademicFacultyRoot>(initialAcademicRoot)
 
   // ==================== AUTHENTICATION ====================
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null)
-  const [facultyDirectory, setFacultyDirectory] = useState<Record<string, FacultyProfile>>({})
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    try {
+      const stored = localStorage.getItem('currentUser')
+      return stored ? JSON.parse(stored) : null
+    } catch {
+      return null
+    }
+  })
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('isAuthenticated') === 'true'
+    } catch {
+      return false
+    }
+  })
+  const [facultyDirectory, setFacultyDirectory] = useState<Record<string, FacultyProfile>>(() => {
+    try {
+      const stored = localStorage.getItem('facultyDirectory')
+      return stored ? JSON.parse(stored) : {}
+    } catch {
+      return {}
+    }
+  })
+  const [facultyPasswords, setFacultyPasswords] = useState<Record<string, string>>(() => {
+    try {
+      const stored = localStorage.getItem('facultyPasswords')
+      return stored ? JSON.parse(stored) : {}
+    } catch {
+      return {}
+    }
+  })
+
+  useEffect(() => {
+    try {
+      if (currentUser) {
+        localStorage.setItem('currentUser', JSON.stringify(currentUser))
+        localStorage.setItem('isAuthenticated', 'true')
+      } else {
+        localStorage.removeItem('currentUser')
+        localStorage.removeItem('isAuthenticated')
+      }
+    } catch {}
+  }, [currentUser])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('facultyDirectory', JSON.stringify(facultyDirectory))
+    } catch {}
+  }, [facultyDirectory])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('facultyPasswords', JSON.stringify(facultyPasswords))
+    } catch {}
+  }, [facultyPasswords])
 
   // ==================== MEETING STATE ====================
   const [currentMeeting, setCurrentMeeting] = useState<{
@@ -261,49 +314,113 @@ function App() {
     startedAt: Date
     attendanceMap: Record<string, boolean>
   } | null>(null)
-  const [meetingHistory, setMeetingHistory] = useState<MeetingRecord[]>([])
-  const [scheduledMeetings, setScheduledMeetings] = useState<ScheduledMeeting[]>([])
+  
+  const [meetingHistory, setMeetingHistory] = useState<MeetingRecord[]>(() => {
+    try {
+      const stored = localStorage.getItem('meetingHistory')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        return parsed.map((item: any) => ({
+          ...item,
+          date: new Date(item.date)
+        }))
+      }
+      return []
+    } catch {
+      return []
+    }
+  })
+  
+  const [scheduledMeetings, setScheduledMeetings] = useState<ScheduledMeeting[]>(() => {
+    try {
+      const stored = localStorage.getItem('scheduledMeetings')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        return parsed.map((item: any) => ({
+          ...item,
+          date: new Date(item.date)
+        }))
+      }
+      return []
+    } catch {
+      return []
+    }
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('meetingHistory', JSON.stringify(meetingHistory))
+    } catch {}
+  }, [meetingHistory])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('scheduledMeetings', JSON.stringify(scheduledMeetings))
+    } catch {}
+  }, [scheduledMeetings])
+
   const [liveMeetingInvite, setLiveMeetingInvite] = useState<{ id: string; title: string; sectionName: string; host: string; startedAt: Date } | null>(null)
   const [activityNotifications, setActivityNotifications] = useState<ActivityNotification[]>([])
-  const [studentDoubtRequests, setStudentDoubtRequests] = useState<StudentDoubtRequest[]>([
-    {
-      id: 'dr-1',
-      topic: 'Data Structures',
-      preferredSlot: 'Today 5:30 PM',
-      requestedBy: 'Aarav Patel',
-      status: 'Sent',
-      createdAt: new Date(Date.now() - 1000 * 60 * 90),
-    },
-    {
-      id: 'dr-2',
-      topic: 'Operating Systems',
-      preferredSlot: 'Tomorrow 10:00 AM',
-      requestedBy: 'Priya Sharma',
-      status: 'Accepted',
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24),
-    },
-    {
-      id: 'dr-3',
-      topic: 'DBMS Lab',
-      preferredSlot: 'Friday 2:00 PM',
-      requestedBy: 'Rahul Gupta',
-      status: 'Rescheduled',
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 40),
-    },
-    {
-      id: 'dr-4',
-      topic: 'Computer Networks',
-      preferredSlot: 'Completed session',
-      requestedBy: 'Sneha Reddy',
-      status: 'Completed',
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 72),
-    },
-  ])
+  
+  const [studentDoubtRequests, setStudentDoubtRequests] = useState<StudentDoubtRequest[]>(() => {
+    try {
+      const stored = localStorage.getItem('studentDoubtRequests')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        return parsed.map((item: any) => ({
+          ...item,
+          createdAt: new Date(item.createdAt)
+        }))
+      }
+    } catch {}
+    return [
+      {
+        id: 'dr-1',
+        topic: 'Data Structures',
+        preferredSlot: 'Today 5:30 PM',
+        requestedBy: 'Aarav Patel',
+        status: 'Sent',
+        createdAt: new Date(Date.now() - 1000 * 60 * 90),
+      },
+      {
+        id: 'dr-2',
+        topic: 'Operating Systems',
+        preferredSlot: 'Tomorrow 10:00 AM',
+        requestedBy: 'Priya Sharma',
+        status: 'Accepted',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24),
+      },
+      {
+        id: 'dr-3',
+        topic: 'DBMS Lab',
+        preferredSlot: 'Friday 2:00 PM',
+        requestedBy: 'Rahul Gupta',
+        status: 'Rescheduled',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 40),
+      },
+      {
+        id: 'dr-4',
+        topic: 'Computer Networks',
+        preferredSlot: 'Completed session',
+        requestedBy: 'Sneha Reddy',
+        status: 'Completed',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 72),
+      },
+    ]
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('studentDoubtRequests', JSON.stringify(studentDoubtRequests))
+    } catch {}
+  }, [studentDoubtRequests])
+
   const [showNotificationPanel, setShowNotificationPanel] = useState(false)
   
   const [showStudentSelection, setShowStudentSelection] = useState(false)
   const [selectedSection, setSelectedSection] = useState<AcademicSection | null>(null)
   const [postMeetingRecord, setPostMeetingRecord] = useState<MeetingRecord | null>(null)
+  const [isMeetingPip, setIsMeetingPip] = useState(false)
   const [shareOptions, setShareOptions] = useState({
     includeRecording: true,
     includeSummary: true,
@@ -326,6 +443,15 @@ function App() {
     }
   }
 
+  // Automatically handle PIP mode based on navigation
+  const handleNavSelect = (nav: AcademicNavItem) => {
+    setSelectedNav(nav)
+    if (currentMeeting) {
+      // If navigating to anything OTHER than meetings, activate PIP. If returning, disable it.
+      setIsMeetingPip(nav !== 'meetings')
+    }
+  }
+
   const handleLogin = (
     creds:
       | { role: 'faculty'; email: string; password: string }
@@ -339,6 +465,16 @@ function App() {
     }
 
     if (creds.role === 'faculty') {
+      const savedPassword = facultyPasswords[normalizedEmail]
+      if (normalizedEmail === 'faculty@demo.com') {
+        // Bypass for demo faculty account
+      } else if (savedPassword && savedPassword !== normalizedPassword) {
+        return { success: false, message: 'Incorrect faculty password.' }
+      } else if (!savedPassword) {
+        // Register demo logins dynamically
+        setFacultyPasswords(prev => ({ ...prev, [normalizedEmail]: normalizedPassword }))
+      }
+
       const emailPrefix = normalizedEmail.split('@')[0] || 'faculty'
       const formattedName = emailPrefix
         .split(/[._-]/)
@@ -373,20 +509,38 @@ function App() {
       return { success: true }
     }
 
-    const studentNameSeed = normalizedEmail.split('@')[0] || 'student'
-    const studentName = studentNameSeed
-      .split(/[._-]/)
-      .filter(Boolean)
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(' ')
+    // Student roster verification check
+    let foundStudent: StudentRecord | null = null
+    for (const dept of academicRoot.departments) {
+      for (const branch of dept.branches || []) {
+        for (const sec of branch.sections || []) {
+          const match = sec.students.find(
+            (s) => s.id === creds.studentId || s.email.toLowerCase() === normalizedEmail
+          )
+          if (match) {
+            foundStudent = match
+            break
+          }
+        }
+        if (foundStudent) break
+      }
+      if (foundStudent) break
+    }
+
+    if (!foundStudent && normalizedEmail !== 'student@demo.com') {
+      return { success: false, message: 'Student ID or Email is not enrolled in the academic roster.' }
+    }
+
+    const name = foundStudent?.name || 'Demo Student'
+    const studentId = foundStudent?.id || creds.studentId || 'STU001'
 
     const user: UserProfile = {
       id: 'student-' + Date.now(),
       email: normalizedEmail,
-      name: studentName || 'Student User',
+      name: name,
       avatar: '🎓',
       role: 'student',
-      studentId: creds.studentId.trim() || 'STU001',
+      studentId: studentId,
     }
     setCurrentUser(user)
     setIsAuthenticated(true)
@@ -404,6 +558,7 @@ function App() {
     }
 
     setFacultyDirectory((prev) => ({ ...prev, [details.facultyEmail]: profile }))
+    setFacultyPasswords((prev) => ({ ...prev, [details.facultyEmail.toLowerCase()]: details.password }))
 
     // Auto-login after registration
     setCurrentUser({
@@ -474,8 +629,9 @@ function App() {
     for (const department of academicRoot.departments) {
       if (department.branches && department.branches.length > 0) {
         for (const branch of department.branches) {
-          if (branch.sections && branch.sections.length > 0) {
-            const section = branch.sections[0]
+          const nestedSection = branch.years?.flatMap((year) => year.sections)[0]
+          const section = nestedSection || branch.sections?.[0]
+          if (section) {
             if (section.students && section.students.length > 0) {
               return section
             }
@@ -485,6 +641,46 @@ function App() {
     }
     return null
   }
+
+  const getAcademicMeetingTargets = (): AcademicMeetingTarget[] =>
+    academicRoot.departments.flatMap((department) =>
+      (department.branches || []).flatMap((branch) => {
+        const years = branch.years || []
+        const branchTarget: AcademicMeetingTarget = {
+          id: `branch-${branch.id}`,
+          type: 'branch',
+          label: `${department.name} / ${branch.name} / Entire Branch`,
+          branchId: branch.id,
+        }
+        const yearTargets = years.map((year) => ({
+          id: `year-${branch.id}-${year.id}`,
+          type: 'year' as const,
+          label: `${department.name} / ${branch.name} / ${year.yearNumber} Year`,
+          branchId: branch.id,
+          yearId: year.id,
+        }))
+        const sectionTargets = years.flatMap((year) =>
+          year.sections.map((section) => ({
+            id: `section-${section.id}`,
+            type: 'section' as const,
+            label: `${department.name} / ${branch.name} / ${year.yearNumber} Year / ${section.name}`,
+            branchId: branch.id,
+            yearId: year.id,
+            sectionId: section.id,
+          })),
+        )
+        const legacySectionTargets = !branch.years && branch.sections
+          ? branch.sections.map((section) => ({
+              id: `section-${section.id}`,
+              type: 'section' as const,
+              label: `${department.name} / ${branch.name} / ${section.name}`,
+              branchId: branch.id,
+              sectionId: section.id,
+            }))
+          : []
+        return [branchTarget, ...yearTargets, ...sectionTargets, ...legacySectionTargets]
+      }),
+    )
 
   const handleStartMeetingForSection = (section: AcademicSection) => {
     if (!permissions.canStartMeetingsForSection) {
@@ -573,6 +769,10 @@ function App() {
         attendanceReport,
         absentMembers,
         autoSharedWithAbsent: false,
+        sectionId: currentMeeting.section.id,
+        sectionName: currentMeeting.section.name,
+        branchName: currentMeeting.section.branchName,
+        yearNumber: currentMeeting.section.yearNumber,
       }
 
       setMeetingHistory((prev) => [record, ...prev])
@@ -580,6 +780,7 @@ function App() {
       setShareOptions({ includeRecording: true, includeSummary: true })
       addToast(`Meeting "${currentMeeting.title}" has ended.`, 'info')
       addActivityNotification('Meeting Ended', `${currentMeeting.title} ended (${durationMinutes} min).`)
+      setIsMeetingPip(false)
       setCurrentMeeting(null)
       setSelectedNav('recordings')
       clearLiveInvite()
@@ -697,30 +898,6 @@ function App() {
 
   if (!isAuthenticated) {
     return <LoginPage onLogin={handleLogin} onRegisterFaculty={handleRegisterFaculty} />
-  }
-
-  // If in a meeting, show meeting room
-  if (currentMeeting) {
-    return (
-      <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading meeting…</div>}>
-        <MeetingRoom
-        meetingId={currentMeeting.id}
-        meetingTitle={currentMeeting.title}
-        participants={[]}
-        selectedStudents={currentMeeting.selectedStudents}
-        currentUser={{
-          id: currentUser!.id,
-          name: currentUser!.name,
-          email: currentUser!.email,
-          role: currentUser!.role,
-        }}
-        attendanceMap={currentMeeting.attendanceMap}
-        onToggleAttendance={handleToggleAttendance}
-        onEndMeeting={handleEndMeeting}
-        onInviteParticipants={() => addToast('Invite panel opened', 'info')}
-        />
-      </Suspense>
-    )
   }
 
   const recentMeetingPreview = meetingHistory.slice(0, 3)
@@ -847,7 +1024,7 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+    <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-gradient-to-br dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-100 transition-colors duration-300">
       <button
         onClick={() => setSidebarOpen((v) => !v)}
         className="fixed top-4 left-4 z-40 w-11 h-11 rounded-xl glass border border-white/10 text-white hover:bg-white/10 transition-all flex items-center justify-center"
@@ -860,16 +1037,15 @@ function App() {
         <HierarchicalSidebar
           isOpen={sidebarOpen}
           selected={selectedNav}
-          onSelect={setSelectedNav}
+          onSelect={handleNavSelect}
           userRole={currentUser?.role || 'student'}
         />
       </Suspense>
 
       <main
-        className="min-h-screen"
+        className={`min-h-screen transition-all duration-300 ease-in-out ${sidebarOpen ? 'md:ml-[320px]' : 'ml-0'}`}
         role="main"
         aria-label="Main content"
-        style={{ marginLeft: sidebarOpen ? '320px' : '0px', transition: 'margin-left 0.22s ease-in-out' }}
       >
         <div className="p-6 md:p-10 pt-16">
           <div className="max-w-7xl mx-auto">
@@ -878,7 +1054,7 @@ function App() {
                 <FacultyStudentDashboard 
                 role={currentUser?.role === 'faculty' ? 'faculty' : 'student'} 
                 onQuickStartMeeting={handleQuickStartMeeting}
-                onNavigate={(nav) => setSelectedNav(nav as AcademicNavItem)}
+                onNavigate={(nav: string) => handleNavSelect(nav as AcademicNavItem)}
                 upcomingMeetings={studentUpcomingMeetings.map((meeting) => ({
                   id: meeting.id,
                   title: meeting.title,
@@ -955,7 +1131,7 @@ function App() {
                   summary: meeting.summary,
                 }))}
                 onOpenRecording={handlePlayRecording}
-                onDownloadResourceSummary={(meetingId) => {
+                onDownloadResourceSummary={(meetingId: string) => {
                   const meeting = meetingHistory.find((item) => item.id === meetingId)
                   if (!meeting) return
                   handleDownloadSummary(meeting)
@@ -964,7 +1140,7 @@ function App() {
                 onInviteStudentToMeeting={(student: StudentRecord) => addToast(`Invited ${student.name} to a meeting.`, 'success')}
                 onSendMessageToStudent={(student: StudentRecord) => addToast(`Message sent to ${student.name}.`, 'success')}
                 onViewStudentProfile={(student: StudentRecord) => addToast(`Viewing profile: ${student.name} (${student.id})`, 'info')}
-                onAcademicRootChange={(updatedDepts) => setAcademicRoot((prev) => ({ ...prev, departments: updatedDepts }))}
+                onAcademicRootChange={(updatedDepts: AcademicDepartment[]) => setAcademicRoot((prev) => ({ ...prev, departments: updatedDepts }))}
                 />
               </Suspense>
             )}
@@ -982,6 +1158,7 @@ function App() {
                         onEdit={() => {}}
                         onDelete={handleDeleteScheduledMeeting}
                         onToast={addToast}
+                        academicTargets={getAcademicMeetingTargets()}
                         />
                       </Suspense>
 
@@ -1235,6 +1412,24 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {currentMeeting && currentUser && (
+        <Suspense fallback={null}>
+          <MeetingRoom
+            meetingId={currentMeeting.id}
+            meetingTitle={currentMeeting.title}
+            participants={[]}
+            selectedStudents={currentMeeting.selectedStudents}
+            currentUser={currentUser}
+            attendanceMap={currentMeeting.attendanceMap}
+            onToggleAttendance={handleToggleAttendance}
+            onEndMeeting={handleEndMeeting}
+            onInviteParticipants={() => addToast('Invite panel opened', 'info')}
+            isPipMode={isMeetingPip}
+            onTogglePip={() => setIsMeetingPip(!isMeetingPip)}
+          />
+        </Suspense>
       )}
     </div>
   )

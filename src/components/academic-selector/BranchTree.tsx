@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { BookOpen, CheckSquare, GraduationCap, Square } from 'lucide-react'
+import { BookOpen, CheckSquare, GraduationCap, Pencil, Plus, Search, Square, Trash2, Users } from 'lucide-react'
 import type { BranchNode } from './types'
 
 const yearLabel = (year: number) => {
@@ -13,29 +14,55 @@ interface BranchTreeProps {
   branches: BranchNode[]
   activeBranchId: string | null
   activeYearId: string | null
+  activeSectionId: string | null
   selectedIds: Set<string>
   canBulkSelect: boolean
   onActivateBranch: (branchId: string) => void
   onActivateYear: (branchId: string, yearId: string) => void
+  onActivateSection: (branchId: string, yearId: string, sectionId: string) => void
   onSelectAllBranch: (branchId: string) => void
   onSelectAllYear: (branchId: string, yearId: string) => void
+  onCreateSection: (branchId: string, yearId: string, sectionName: string) => void
+  onRenameSection: (sectionId: string, sectionName: string) => void
+  onDeleteSection: (sectionId: string) => void
 }
 
 export default function BranchTree({
   branches,
   activeBranchId,
   activeYearId,
+  activeSectionId,
   selectedIds,
   canBulkSelect,
   onActivateBranch,
   onActivateYear,
+  onActivateSection,
   onSelectAllBranch,
   onSelectAllYear,
+  onCreateSection,
+  onRenameSection,
+  onDeleteSection,
 }: BranchTreeProps) {
+  const [query, setQuery] = useState('')
+  const [newSectionForYear, setNewSectionForYear] = useState<string | null>(null)
+  const [newSectionName, setNewSectionName] = useState('')
+  const normalizedQuery = query.trim().toLowerCase()
+
   return (
     <div className="space-y-2">
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search section"
+          className="w-full rounded-xl border border-white/10 bg-slate-950/40 py-2 pl-9 pr-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
+        />
+      </div>
       {branches.map((branch) => {
-        const branchStudentIds = branch.years.flatMap((year) => year.students.map((student) => student.uid))
+        const branchStudentIds = branch.years.flatMap((year) =>
+          year.sections.flatMap((section) => section.students.map((student) => student.uid)),
+        )
         const selectedInBranch = branchStudentIds.filter((id) => selectedIds.has(id)).length
 
         return (
@@ -50,7 +77,7 @@ export default function BranchTree({
                 onClick={() => onActivateBranch(branch.id)}
                 className="text-left text-sm text-white font-medium truncate hover:text-cyan-100"
               >
-                {branch.name}
+                {branch.departmentName} / {branch.name}
                 {branch.code ? ` (${branch.code})` : ''}
               </button>
               {canBulkSelect && (
@@ -79,7 +106,13 @@ export default function BranchTree({
                   className="overflow-hidden border-t border-white/10"
                 >
                   {branch.years.map((year) => {
-                    const selectedInYear = year.students.filter((student) => selectedIds.has(student.uid)).length
+                    const yearStudents = year.sections.flatMap((section) => section.students)
+                    const selectedInYear = yearStudents.filter((student) => selectedIds.has(student.uid)).length
+                    const visibleSections = normalizedQuery
+                      ? year.sections.filter((section) =>
+                          `${branch.departmentName} ${branch.name} ${yearLabel(year.year)} ${section.name}`.toLowerCase().includes(normalizedQuery),
+                        )
+                      : year.sections
 
                     return (
                       <div key={year.id} className="pl-8 pr-3 py-2 border-b border-white/5 last:border-b-0">
@@ -95,7 +128,7 @@ export default function BranchTree({
                               className="text-cyan-300 hover:text-cyan-200"
                               aria-label={`Select all in Year ${year.year}`}
                             >
-                              {selectedInYear > 0 && selectedInYear === year.students.length ? (
+                              {selectedInYear > 0 && selectedInYear === yearStudents.length ? (
                                 <CheckSquare className="h-4 w-4" />
                               ) : (
                                 <Square className="h-4 w-4" />
@@ -109,10 +142,89 @@ export default function BranchTree({
                           >
                             {yearLabel(year.year)}
                           </button>
-                          <span className="ml-auto text-xs text-slate-400">{year.students.length}</span>
+                          <span className="ml-auto text-xs text-slate-400">{yearStudents.length}</span>
                         </div>
                         <div className="text-xs text-slate-500 pb-1 pl-6 pt-1">
-                          {selectedInYear} selected / {year.students.length} total
+                          {selectedInYear} selected / {yearStudents.length} total
+                        </div>
+                        <div className="space-y-1 pl-6">
+                          {visibleSections.map((section) => {
+                            const selectedInSection = section.students.filter((student) => selectedIds.has(student.uid)).length
+                            return (
+                              <div
+                                key={section.id}
+                                className={`rounded-lg border px-2 py-2 ${
+                                  activeSectionId === section.id
+                                    ? 'border-cyan-400/30 bg-cyan-500/10'
+                                    : 'border-white/5 bg-slate-950/25'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <Users className="h-3.5 w-3.5 text-cyan-300" />
+                                  <button
+                                    onClick={() => onActivateSection(branch.id, year.id, section.id)}
+                                    className="min-w-0 flex-1 text-left text-xs text-slate-100 hover:text-white truncate"
+                                  >
+                                    {section.name} ({section.students.length} Students)
+                                  </button>
+                                  {canBulkSelect && (
+                                    <>
+                                      <button
+                                        onClick={() => {
+                                          const nextName = window.prompt('Section name', section.name)
+                                          if (nextName) onRenameSection(section.id, nextName)
+                                        }}
+                                        className="text-slate-400 hover:text-slate-200"
+                                        title="Rename section"
+                                      >
+                                        <Pencil className="h-3.5 w-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => onDeleteSection(section.id)}
+                                        className="text-rose-300 hover:text-rose-200"
+                                        title="Delete section"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                                <div className="mt-1 text-[11px] text-slate-500">
+                                  {selectedInSection} selected / CR: {section.classRepresentative || 'Not assigned'} / Advisor: {section.facultyAdvisor || 'Unassigned'}
+                                </div>
+                              </div>
+                            )
+                          })}
+                          {canBulkSelect && (
+                            <div className="pt-1">
+                              {newSectionForYear === year.id ? (
+                                <form
+                                  className="flex gap-1"
+                                  onSubmit={(event) => {
+                                    event.preventDefault()
+                                    onCreateSection(branch.id, year.id, newSectionName)
+                                    setNewSectionName('')
+                                    setNewSectionForYear(null)
+                                  }}
+                                >
+                                  <input
+                                    value={newSectionName}
+                                    onChange={(event) => setNewSectionName(event.target.value)}
+                                    placeholder="Section name"
+                                    className="min-w-0 flex-1 rounded-md border border-white/10 bg-slate-950/50 px-2 py-1 text-xs text-white focus:outline-none"
+                                  />
+                                  <button className="rounded-md bg-cyan-500/20 px-2 text-xs text-cyan-100">Add</button>
+                                </form>
+                              ) : (
+                                <button
+                                  onClick={() => setNewSectionForYear(year.id)}
+                                  className="inline-flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200"
+                                >
+                                  <Plus className="h-3 w-3" /> Add section
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     )

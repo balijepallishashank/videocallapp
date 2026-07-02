@@ -28,14 +28,25 @@ export interface AcademicSection {
   students: StudentRecord[]
   subject?: string
   faculty?: string
+  facultyAdvisor?: string
+  classRepresentative?: string
   departmentName?: string
+  branchName?: string
   yearNumber?: number
+}
+
+export interface AcademicYear {
+  id: string
+  yearNumber: number
+  sections: AcademicSection[]
+  students?: StudentRecord[]
 }
 
 export interface AcademicBranch {
   id: string
   name: string
-  sections: AcademicSection[]
+  years?: AcademicYear[]
+  sections?: AcademicSection[]
 }
 
 export interface AcademicDepartment {

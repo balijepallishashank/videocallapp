@@ -7,17 +7,25 @@ interface ScreenRecordingProps {
   onToast: (message: string, type: 'info' | 'success' | 'warning' | 'error') => void
 }
 
+interface RecordingItem {
+  url: string
+  duration: number
+  timestamp: Date
+  extension: string
+}
+
 export default function ScreenRecording({ videoStream, onToast }: ScreenRecordingProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const [recordAudio, setRecordAudio] = useState(true)
-  const [recordings, setRecordings] = useState<{ url: string; duration: number; timestamp: Date }[]>([])
+  const [recordings, setRecordings] = useState<RecordingItem[]>([])
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const timerRef = useRef<number | null>(null)
   const startTimeRef = useRef<number>(0)
+  const currentMimeTypeRef = useRef<string>('video/webm')
 
   const startRecording = async () => {
     if (!videoStream) {
@@ -32,9 +40,29 @@ export default function ScreenRecording({ videoStream, onToast }: ScreenRecordin
       
       const combinedStream = new MediaStream([...videoTracks, ...audioTracks])
 
-      const mediaRecorder = new MediaRecorder(combinedStream, {
-        mimeType: 'video/webm;codecs=vp9',
-      })
+      const mimeTypes = [
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm;codecs=h264',
+        'video/webm',
+        'video/mp4;codecs=avc1',
+        'video/mp4'
+      ]
+
+      let selectedMimeType = ''
+      for (const mime of mimeTypes) {
+        if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) {
+          selectedMimeType = mime
+          break
+        }
+      }
+
+      currentMimeTypeRef.current = selectedMimeType || 'video/webm'
+
+      const mediaRecorder = new MediaRecorder(
+        combinedStream,
+        selectedMimeType ? { mimeType: selectedMimeType } : undefined
+      )
 
       mediaRecorderRef.current = mediaRecorder
       chunksRef.current = []
@@ -46,11 +74,13 @@ export default function ScreenRecording({ videoStream, onToast }: ScreenRecordin
       }
 
       mediaRecorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'video/webm' })
+        const mime = currentMimeTypeRef.current
+        const extension = mime.includes('video/mp4') ? 'mp4' : 'webm'
+        const blob = new Blob(chunksRef.current, { type: mime })
         const url = URL.createObjectURL(blob)
         const duration = Math.floor((Date.now() - startTimeRef.current) / 1000)
         
-        setRecordings([...recordings, { url, duration, timestamp: new Date() }])
+        setRecordings(prev => [...prev, { url, duration, timestamp: new Date(), extension }])
         onToast('Recording saved successfully!', 'success')
       }
 
@@ -108,10 +138,10 @@ export default function ScreenRecording({ videoStream, onToast }: ScreenRecordin
     }
   }
 
-  const downloadRecording = (url: string, index: number) => {
+  const downloadRecording = (recording: RecordingItem, index: number) => {
     const a = document.createElement('a')
-    a.href = url
-    a.download = `meeting-recording-${index + 1}.webm`
+    a.href = recording.url
+    a.download = `meeting-recording-${index + 1}.${recording.extension}`
     a.click()
     onToast('Recording downloaded', 'success')
   }
@@ -230,7 +260,7 @@ export default function ScreenRecording({ videoStream, onToast }: ScreenRecordin
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.9 }}
-                  onClick={() => downloadRecording(recording.url, index)}
+                  onClick={() => downloadRecording(recording, index)}
                   className="p-2 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 transition-all"
                 >
                   <Download className="w-5 h-5" />

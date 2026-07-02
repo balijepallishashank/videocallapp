@@ -1,32 +1,107 @@
 import { useState, useRef, useEffect } from 'react'
-import { motion } from 'framer-motion'
-import { Pen, Eraser, Download, Trash2, Undo, Redo } from 'lucide-react'
+import { Pen, Eraser, Download, Trash2, Undo, Redo, Type, MousePointer2, ArrowLeft, Circle, Square as SquareIcon, Minus } from 'lucide-react'
+import { sendSyncMessage, registerSyncListener } from '../services/syncChannel'
 
 interface WhiteboardProps {
   onToast: (message: string, type: 'info' | 'success' | 'warning' | 'error') => void
+  onClose?: () => void
 }
 
-type Tool = 'pen' | 'eraser' | 'line' | 'circle' | 'square'
+type Tool = 'pen' | 'eraser' | 'text' | 'line' | 'circle' | 'square'
 
-export default function Whiteboard({ onToast }: WhiteboardProps) {
+export default function Whiteboard({ onToast, onClose }: WhiteboardProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const startPosRef = useRef<{ x: number; y: number } | null>(null)
+  const snapshotRef = useRef<ImageData | null>(null)
+  const lastPosRef = useRef<{ x: number; y: number } | null>(null)
   const [isDrawing, setIsDrawing] = useState(false)
   const [tool, setTool] = useState<Tool>('pen')
   const [color, setColor] = useState('#3b82f6')
   const [lineWidth, setLineWidth] = useState(3)
+  const [fontSize, setFontSize] = useState(20)
   const [history, setHistory] = useState<ImageData[]>([])
   const [historyStep, setHistoryStep] = useState(-1)
+  const [showTextInput, setShowTextInput] = useState(false)
+  const [textInput, setTextInput] = useState('')
+  const [textPosition, setTextPosition] = useState<{ x: number; y: number } | null>(null)
+  
+  // Simulated Multiplayer Cursors
+  const MOCK_CURSORS = [
+    { id: '1', name: 'Sarah Chen', color: '#ef4444', x: 100, y: 100, tx: 100, ty: 100 },
+    { id: '2', name: 'Alex Rivera', color: '#10b981', x: 300, y: 200, tx: 300, ty: 200 }
+  ]
+  const [cursors, setCursors] = useState(MOCK_CURSORS)
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCursors(prev => prev.map(c => {
+        const dx = c.tx - c.x;
+        const dy = c.ty - c.y;
+        const newX = c.x + dx * 0.15;
+        const newY = c.y + dy * 0.15;
+
+        let newTx = c.tx;
+        let newTy = c.ty;
+        if (Math.random() < 0.05) {
+          newTx = Math.random() * (containerRef.current?.offsetWidth || 800);
+          newTy = Math.random() * (containerRef.current?.offsetHeight || 600);
+        }
+        return { ...c, x: newX, y: newY, tx: newTx, ty: newTy };
+      }));
+    }, 50);
+    return () => clearInterval(interval);
+  }, [])
+
+  useEffect(() => {
+    const cleanup = registerSyncListener((type, payload) => {
+      if (type === 'WHITEBOARD_DRAW') {
+        const canvas = canvasRef.current
+        const ctx = canvas?.getContext('2d')
+        if (!canvas || !ctx) return
+
+        ctx.save()
+        ctx.beginPath()
+        ctx.strokeStyle = payload.tool === 'eraser' ? 'white' : payload.color
+        ctx.lineWidth = payload.tool === 'eraser' ? payload.lineWidth * 3 : payload.lineWidth
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+
+        if (payload.tool === 'pen' || payload.tool === 'eraser') {
+          ctx.moveTo(payload.x1, payload.y1)
+          ctx.lineTo(payload.x2, payload.y2)
+          ctx.stroke()
+        } else if (payload.tool === 'line') {
+          ctx.moveTo(payload.startX, payload.startY)
+          ctx.lineTo(payload.endX, payload.endY)
+          ctx.stroke()
+        } else if (payload.tool === 'square') {
+          ctx.strokeRect(payload.startX, payload.startY, payload.endX - payload.startX, payload.endY - payload.startY)
+        } else if (payload.tool === 'circle') {
+          const radius = Math.sqrt(Math.pow(payload.endX - payload.startX, 2) + Math.pow(payload.endY - payload.startY, 2))
+          ctx.arc(payload.startX, payload.startY, radius, 0, 2 * Math.PI)
+          ctx.stroke()
+        } else if (payload.tool === 'clear') {
+          ctx.fillStyle = 'white'
+          ctx.fillRect(0, 0, canvas.width, canvas.height)
+        }
+        ctx.restore()
+      }
+    })
+    return () => cleanup()
+  }, [])
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
+    const container = containerRef.current
+    if (!canvas || !container) return
 
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // Set canvas size
-    canvas.width = canvas.offsetWidth
-    canvas.height = canvas.offsetHeight
+    // Set canvas size to fill container
+    canvas.width = container.offsetWidth
+    canvas.height = container.offsetHeight
 
     // Fill with white background
     ctx.fillStyle = 'white'
@@ -34,6 +109,25 @@ export default function Whiteboard({ onToast }: WhiteboardProps) {
 
     // Save initial state
     saveState()
+
+    // Handle window resize
+    const handleResize = () => {
+      if (!canvas || !container) return
+      const tempCanvas = document.createElement('canvas')
+      tempCanvas.width = canvas.width
+      tempCanvas.height = canvas.height
+      const tempCtx = tempCanvas.getContext('2d')
+      if (tempCtx) tempCtx.drawImage(canvas, 0, 0)
+
+      canvas.width = container.offsetWidth
+      canvas.height = container.offsetHeight
+      ctx.fillStyle = 'white'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(tempCanvas, 0, 0)
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
   }, [])
 
   const saveState = () => {
@@ -84,6 +178,7 @@ export default function Whiteboard({ onToast }: WhiteboardProps) {
     ctx.fillStyle = 'white'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
     saveState()
+    sendSyncMessage('WHITEBOARD_DRAW', { tool: 'clear' })
     onToast('Whiteboard cleared', 'info')
   }
 
@@ -114,6 +209,9 @@ export default function Whiteboard({ onToast }: WhiteboardProps) {
     const y = e.clientY - rect.top
 
     setIsDrawing(true)
+    startPosRef.current = { x, y }
+    lastPosRef.current = { x, y }
+    snapshotRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
 
     ctx.beginPath()
     ctx.moveTo(x, y)
@@ -137,143 +235,299 @@ export default function Whiteboard({ onToast }: WhiteboardProps) {
     const y = e.clientY - rect.top
 
     if (tool === 'pen' || tool === 'eraser') {
-      ctx.lineTo(x, y)
-      ctx.stroke()
+      if (lastPosRef.current) {
+        ctx.beginPath()
+        ctx.moveTo(lastPosRef.current.x, lastPosRef.current.y)
+        ctx.lineTo(x, y)
+        ctx.strokeStyle = tool === 'eraser' ? 'white' : color
+        ctx.lineWidth = tool === 'eraser' ? lineWidth * 3 : lineWidth
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+        ctx.stroke()
+        
+        sendSyncMessage('WHITEBOARD_DRAW', {
+          tool,
+          x1: lastPosRef.current.x,
+          y1: lastPosRef.current.y,
+          x2: x,
+          y2: y,
+          color,
+          lineWidth
+        })
+        
+        lastPosRef.current = { x, y }
+      }
+    } else if (startPosRef.current && snapshotRef.current) {
+      ctx.putImageData(snapshotRef.current, 0, 0)
+      ctx.beginPath()
+      ctx.strokeStyle = color
+      ctx.lineWidth = lineWidth
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      
+      const startX = startPosRef.current.x
+      const startY = startPosRef.current.y
+      
+      if (tool === 'line') {
+        ctx.moveTo(startX, startY)
+        ctx.lineTo(x, y)
+        ctx.stroke()
+      } else if (tool === 'square') {
+        const width = x - startX
+        const height = y - startY
+        ctx.strokeRect(startX, startY, width, height)
+      } else if (tool === 'circle') {
+        const radius = Math.sqrt(Math.pow(x - startX, 2) + Math.pow(y - startY, 2))
+        ctx.arc(startX, startY, radius, 0, 2 * Math.PI)
+        ctx.stroke()
+      }
     }
   }
 
-  const stopDrawing = () => {
+  const stopDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isDrawing) {
       setIsDrawing(false)
+      const rect = canvasRef.current?.getBoundingClientRect()
+      const x = rect ? e.clientX - rect.left : 0
+      const y = rect ? e.clientY - rect.top : 0
+
+      if (startPosRef.current && (tool === 'line' || tool === 'square' || tool === 'circle')) {
+        sendSyncMessage('WHITEBOARD_DRAW', {
+          tool,
+          startX: startPosRef.current.x,
+          startY: startPosRef.current.y,
+          endX: x,
+          endY: y,
+          color,
+          lineWidth
+        })
+      }
+
+      startPosRef.current = null
+      lastPosRef.current = null
+      snapshotRef.current = null
       saveState()
     }
   }
 
+  const addText = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (tool !== 'text') return
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const rect = canvas.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+
+    setTextPosition({ x, y })
+    setShowTextInput(true)
+    setTextInput('')
+  }
+
+  const submitText = () => {
+    if (!textInput.trim() || !textPosition) return
+
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d')
+    if (!ctx || !canvas) return
+
+    ctx.font = `${fontSize}px Arial`
+    ctx.fillStyle = color
+    ctx.fillText(textInput, textPosition.x, textPosition.y + fontSize)
+    saveState()
+    setShowTextInput(false)
+    setTextInput('')
+    onToast('Text added', 'success')
+  }
+
   const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#000000']
 
+  const TOOL_BUTTONS = [
+    { id: 'pen', icon: Pen, label: 'Draw' },
+    { id: 'eraser', icon: Eraser, label: 'Eraser' },
+    { id: 'text', icon: Type, label: 'Text' },
+    { id: 'line', icon: Minus, label: 'Line' },
+    { id: 'square', icon: SquareIcon, label: 'Rectangle' },
+    { id: 'circle', icon: Circle, label: 'Circle' }
+  ] as const;
+
   return (
-    <div className="glass rounded-xl p-5 h-96 flex flex-col space-y-3">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <Pen className="w-5 h-5 text-indigo-400" />
-          <span className="font-semibold text-white">Whiteboard</span>
+    <div ref={containerRef} className="w-full h-full flex flex-col bg-slate-950 overflow-hidden">
+      {/* Unified Compact Toolbar */}
+      <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-white/10 shadow-lg z-10">
+        {/* Left: Back to Meeting */}
+        {onClose && (
+          <button 
+            onClick={onClose}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white transition-colors text-sm font-medium"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span className="hidden sm:inline">Back to Meeting</span>
+          </button>
+        )}
+
+        {/* Center: Tools */}
+        <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto custom-scrollbar">
+          <div className="flex items-center gap-1 bg-slate-800/50 p-1 rounded-xl border border-white/5">
+            {TOOL_BUTTONS.map(({ id, icon: Icon, label }) => (
+              <button
+                key={id}
+                onClick={() => setTool(id as Tool)}
+                className={`p-2 rounded-lg transition-all ${
+                  tool === id
+                    ? 'bg-blue-500/30 text-blue-400'
+                    : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
+                }`}
+                title={label}
+              >
+                <Icon className="w-4 h-4" />
+              </button>
+            ))}
+          </div>
+
+          <div className="w-px h-6 bg-slate-800 mx-1 hidden md:block" />
+
+          {/* Color Picker */}
+          <div className="flex items-center gap-1.5 bg-slate-800/50 p-2 rounded-xl border border-white/5">
+            {COLORS.map((c) => (
+              <button
+                key={c}
+                onClick={() => setColor(c)}
+                className={`w-5 h-5 rounded-full transition-transform ${
+                  color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900 scale-110' : 'hover:scale-110'
+                }`}
+                style={{ backgroundColor: c }}
+                title="Select color"
+              />
+            ))}
+          </div>
+
+          <div className="w-px h-6 bg-slate-800 mx-1 hidden md:block" />
+
+          {/* Stroke Width / Font Size */}
+          <div className="flex items-center gap-2 bg-slate-800/50 px-3 py-1.5 rounded-xl border border-white/5 min-w-[100px]">
+            {tool === 'text' ? (
+              <>
+                <Type className="w-3.5 h-3.5 text-slate-400" />
+                <input
+                  type="range"
+                  min="10"
+                  max="48"
+                  value={fontSize}
+                  onChange={(e) => setFontSize(Number(e.target.value))}
+                  className="w-16 sm:w-20 accent-blue-500"
+                  title="Font size"
+                />
+              </>
+            ) : (
+              <>
+                <div className="w-3.5 h-3.5 rounded-full bg-slate-400" style={{ transform: `scale(${lineWidth / 10})` }} />
+                <input
+                  type="range"
+                  min="1"
+                  max="10"
+                  value={lineWidth}
+                  onChange={(e) => setLineWidth(Number(e.target.value))}
+                  className="w-16 sm:w-20 accent-blue-500"
+                  title="Stroke width"
+                />
+              </>
+            )}
+          </div>
         </div>
 
-        <div className="flex gap-1">
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
+        {/* Right: Actions */}
+        <div className="flex items-center gap-1">
+          <button
             onClick={undo}
             disabled={historyStep <= 0}
-            className="p-2 rounded-lg bg-slate-700/30 hover:bg-slate-700/50 text-slate-300 transition-all disabled:opacity-30"
+            className="p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
             title="Undo"
           >
             <Undo className="w-4 h-4" />
-          </motion.button>
-
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
+          </button>
+          <button
             onClick={redo}
             disabled={historyStep >= history.length - 1}
-            className="p-2 rounded-lg bg-slate-700/30 hover:bg-slate-700/50 text-slate-300 transition-all disabled:opacity-30"
+            className="p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
             title="Redo"
           >
             <Redo className="w-4 h-4" />
-          </motion.button>
-
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
+          </button>
+          <div className="w-px h-6 bg-slate-800 mx-1" />
+          <button
             onClick={downloadCanvas}
-            className="p-2 rounded-lg bg-green-500/20 hover:bg-green-500/30 text-green-300 transition-all"
-            title="Download"
+            className="p-2 rounded-lg text-blue-400 hover:bg-blue-500/20 transition-colors"
+            title="Download Board"
           >
             <Download className="w-4 h-4" />
-          </motion.button>
-
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
+          </button>
+          <button
             onClick={clearCanvas}
-            className="p-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 transition-all"
-            title="Clear"
+            className="p-2 rounded-lg text-red-400 hover:bg-red-500/20 transition-colors"
+            title="Clear Board"
           >
             <Trash2 className="w-4 h-4" />
-          </motion.button>
+          </button>
         </div>
-      </div>
-
-      {/* Tools */}
-      <div className="flex gap-2 mb-3">
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={() => setTool('pen')}
-          className={`p-2 rounded-lg transition-all ${
-            tool === 'pen'
-              ? 'bg-blue-500/30 text-blue-300'
-              : 'bg-slate-700/30 text-slate-400 hover:bg-slate-700/50'
-          }`}
-        >
-          <Pen className="w-4 h-4" />
-        </motion.button>
-
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={() => setTool('eraser')}
-          className={`p-2 rounded-lg transition-all ${
-            tool === 'eraser'
-              ? 'bg-blue-500/30 text-blue-300'
-              : 'bg-slate-700/30 text-slate-400 hover:bg-slate-700/50'
-          }`}
-        >
-          <Eraser className="w-4 h-4" />
-        </motion.button>
-
-        <div className="h-8 w-px bg-slate-600 mx-1" />
-
-        {/* Color Picker */}
-        <div className="flex gap-1">
-          {COLORS.map((c) => (
-            <motion.button
-              key={c}
-              whileHover={{ scale: 1.1 }}
-              whileTap={{ scale: 0.9 }}
-              onClick={() => setColor(c)}
-              className={`w-6 h-6 rounded-full transition-all ${
-                color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-800' : ''
-              }`}
-              style={{ backgroundColor: c }}
-            />
-          ))}
-        </div>
-
-        <div className="h-8 w-px bg-slate-600 mx-1" />
-
-        {/* Line Width */}
-        <input
-          type="range"
-          min="1"
-          max="10"
-          value={lineWidth}
-          onChange={(e) => setLineWidth(Number(e.target.value))}
-          className="w-20"
-          title="Line width"
-        />
       </div>
 
       {/* Canvas */}
-      <div className="flex-1 bg-white rounded-lg overflow-hidden">
+      <div className="flex-1 bg-white overflow-hidden relative" style={{ cursor: tool === 'text' ? 'text' : 'crosshair' }}>
         <canvas
           ref={canvasRef}
-          onMouseDown={startDrawing}
+          onMouseDown={(e) => {
+            if (tool === 'text') {
+              addText(e)
+            } else {
+              startDrawing(e)
+            }
+          }}
           onMouseMove={draw}
           onMouseUp={stopDrawing}
           onMouseLeave={stopDrawing}
           className="w-full h-full cursor-crosshair"
         />
+
+        {/* Render Floating Cursors */}
+        {cursors.map(c => (
+          <div key={c.id} className="absolute top-0 left-0 pointer-events-none transition-transform duration-75 z-20" style={{ transform: `translate(${c.x}px, ${c.y}px)` }}>
+            <MousePointer2 className="w-5 h-5 drop-shadow-md" style={{ color: c.color, fill: c.color }} />
+            <div className="text-white text-[10px] px-2 py-0.5 rounded shadow-lg mt-1 ml-4 whitespace-nowrap" style={{ backgroundColor: c.color }}>{c.name}</div>
+          </div>
+        ))}
+
+        {/* Text Input Modal */}
+        {showTextInput && textPosition && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/30 z-50">
+            <div className="bg-slate-800 p-6 rounded-lg border border-white/20 shadow-xl">
+              <label className="block text-sm font-medium text-white mb-3">Enter text:</label>
+              <input
+                type="text"
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && submitText()}
+                autoFocus
+                placeholder="Type your text..."
+                className="w-80 px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+              />
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setShowTextInput(false)}
+                  className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitText}
+                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+                >
+                  Add Text
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

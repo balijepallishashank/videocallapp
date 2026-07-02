@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Send, Paperclip, MessageCircle, Users } from 'lucide-react'
+import { Send, Paperclip, MessageCircle, Users, File as FileIcon } from 'lucide-react'
 
 interface Message {
   id: number
@@ -9,6 +9,8 @@ interface Message {
   content: string
   timestamp: string
   isOwn: boolean
+  recipient?: string
+  file?: string
 }
 
 interface ChatSidebarProps {
@@ -23,6 +25,7 @@ const initialMessages: Message[] = [
     content: 'Great presentation so far!',
     timestamp: '10:30 AM',
     isOwn: false,
+    recipient: 'everyone'
   },
   {
     id: 2,
@@ -31,6 +34,7 @@ const initialMessages: Message[] = [
     content: 'Thanks! The design feedback is really helpful.',
     timestamp: '10:31 AM',
     isOwn: true,
+    recipient: 'everyone'
   },
   {
     id: 3,
@@ -39,6 +43,7 @@ const initialMessages: Message[] = [
     content: 'I love the color scheme. Any thoughts on accessibility?',
     timestamp: '10:32 AM',
     isOwn: false,
+    recipient: 'everyone'
   },
   {
     id: 4,
@@ -47,6 +52,7 @@ const initialMessages: Message[] = [
     content: 'Good point! We should test with screen readers.',
     timestamp: '10:33 AM',
     isOwn: true,
+    recipient: 'everyone'
   },
 ]
 
@@ -54,6 +60,8 @@ export default function ChatSidebar({ onAddToast }: ChatSidebarProps) {
   const [activeTab, setActiveTab] = useState<'messages' | 'participants'>('messages')
   const [messages, setMessages] = useState(initialMessages)
   const [inputValue, setInputValue] = useState('')
+  const [chatRecipient, setChatRecipient] = useState<string>('everyone')
+  const [isDraggingFile, setIsDraggingFile] = useState(false)
 
   const handleSendMessage = () => {
     if (inputValue.trim()) {
@@ -64,6 +72,7 @@ export default function ChatSidebar({ onAddToast }: ChatSidebarProps) {
         content: inputValue,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         isOwn: true,
+        recipient: chatRecipient
       }
       setMessages([...messages, newMessage])
       setInputValue('')
@@ -115,7 +124,31 @@ export default function ChatSidebar({ onAddToast }: ChatSidebarProps) {
 
       {/* Content Area - Flexible height */}
       {activeTab === 'messages' ? (
-        <>
+        <div 
+          className="flex-1 flex flex-col relative"
+          onDragOver={(e) => { e.preventDefault(); setIsDraggingFile(true); }}
+          onDragLeave={() => setIsDraggingFile(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDraggingFile(false);
+            if (e.dataTransfer.files.length > 0) {
+              const file = e.dataTransfer.files[0];
+              const newMessage: Message = { id: messages.length + 1, author: 'You', avatar: '👨‍💼', content: `Shared a file: ${file.name}`, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isOwn: true, recipient: chatRecipient, file: file.name };
+              setMessages([...messages, newMessage]);
+              onAddToast(`Shared ${file.name}`, 'success');
+            }
+          }}
+        >
+          {isDraggingFile && (
+            <div className="absolute inset-0 z-20 mb-16 border-2 border-dashed border-blue-500 bg-slate-900/90 flex items-center justify-center rounded-xl backdrop-blur-sm">
+              <p className="text-blue-400 font-bold text-lg pointer-events-none">Drop file to share</p>
+            </div>
+          )}
+          <select value={chatRecipient} onChange={(e) => setChatRecipient(e.target.value)} className="bg-slate-800 border border-slate-700 text-xs text-slate-300 p-1.5 rounded-md mb-3 w-full outline-none cursor-pointer">
+            <option value="everyone">Everyone</option>
+            <option value="sarah">To: Sarah Chen (Direct)</option>
+            <option value="alex">To: Alex Rivera (Direct)</option>
+          </select>
           {/* Messages - Scrollable area */}
           <div className="flex-1 overflow-y-auto space-y-4 mb-5 pr-2 custom-scrollbar">
             <AnimatePresence>
@@ -131,16 +164,18 @@ export default function ChatSidebar({ onAddToast }: ChatSidebarProps) {
                   <div className={`flex flex-col ${message.isOwn ? 'items-end' : ''} max-w-[75%]`}>
                     <div className="text-[11px] text-slate-400 mb-1.5 px-1">
                       <span className="font-bold text-slate-300">{message.author}</span>
+                      {message.recipient !== 'everyone' && <span className="ml-1 px-1 py-0.5 rounded bg-purple-500/20 text-purple-300 text-[9px] uppercase tracking-wider">Direct</span>}
                       <span className="ml-2 text-slate-500">{message.timestamp}</span>
                     </div>
                     <motion.div
                       whileHover={{ scale: 1.02 }}
                       className={`px-4 py-2.5 rounded-2xl text-sm break-words shadow-lg ${
                         message.isOwn
-                          ? 'bg-gradient-to-br from-blue-600/50 to-blue-700/50 border border-blue-400/50 text-white shadow-blue-500/20'
+                          ? message.recipient !== 'everyone' ? 'bg-gradient-to-br from-purple-600/50 to-purple-700/50 border border-purple-400/50 text-white shadow-purple-500/20' : 'bg-gradient-to-br from-blue-600/50 to-blue-700/50 border border-blue-400/50 text-white shadow-blue-500/20'
                           : 'bg-slate-800/60 backdrop-blur-sm border border-white/10 text-slate-100 shadow-black/20'
                       }`}
                     >
+                      {message.file && <FileIcon className="inline w-4 h-4 mr-1 text-blue-400" />}
                       {message.content}
                     </motion.div>
                   </div>
@@ -179,7 +214,7 @@ export default function ChatSidebar({ onAddToast }: ChatSidebarProps) {
               <Send className="w-5 h-5" />
             </motion.button>
           </div>
-        </>
+        </div>
       ) : (
         <div className="flex-1 overflow-y-auto space-y-2.5 pr-2 custom-scrollbar">
           {[

@@ -1,3 +1,4 @@
+import React from 'react'
 import { motion } from 'framer-motion'
 import { AlertCircle, Wifi, Camera, RefreshCw } from 'lucide-react'
 
@@ -7,6 +8,8 @@ export function NetworkError({ onRetry }: { onRetry: () => void }) {
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
+      role="alertdialog"
+      aria-modal="true"
       className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
     >
       <motion.div
@@ -50,6 +53,7 @@ export function PermissionDeniedError({ type = 'camera' }: { type?: 'camera' | '
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
+      role="alert"
       className="glass rounded-2xl p-6 border border-orange-500/30 bg-orange-500/5"
     >
       <div className="flex items-start gap-4">
@@ -62,6 +66,12 @@ export function PermissionDeniedError({ type = 'camera' }: { type?: 'camera' | '
           <p className="text-xs text-orange-400 mt-2">
             💡 Try refreshing the page or checking your browser's permission settings.
           </p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="mt-3 px-4 py-2 text-sm rounded-lg bg-orange-500/20 hover:bg-orange-500/30 text-orange-200 transition-colors font-medium"
+          >
+            Refresh Page
+          </button>
         </div>
       </div>
     </motion.div>
@@ -74,6 +84,7 @@ export function DeviceUnavailableError() {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
+      role="alert"
       className="glass rounded-2xl p-6 border border-red-500/30 bg-red-500/5 text-center"
     >
       <motion.div
@@ -87,6 +98,12 @@ export function DeviceUnavailableError() {
       <p className="text-sm text-slate-300">
         No camera or microphone detected. Please connect a device and try again.
       </p>
+      <button 
+        onClick={() => window.location.reload()}
+        className="mt-4 px-4 py-2 text-sm rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-200 transition-colors font-medium mx-auto block"
+      >
+        Check Again
+      </button>
     </motion.div>
   )
 }
@@ -106,6 +123,7 @@ export function ErrorMessage({
       initial={{ opacity: 0, x: 100 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 100 }}
+      role="alert"
       className="fixed bottom-4 right-4 glass rounded-xl p-4 border border-red-500/30 max-w-sm z-40"
     >
       <div className="flex items-start gap-3">
@@ -127,6 +145,7 @@ export function ErrorMessage({
             whileHover={{ scale: 1.2 }}
             whileTap={{ scale: 0.9 }}
             onClick={onDismiss}
+            aria-label="Close notification"
             className="text-slate-400 hover:text-slate-200"
           >
             ✕
@@ -138,25 +157,48 @@ export function ErrorMessage({
 }
 
 // Error boundary for sections
-export function ErrorBoundarySection({ 
-  children, 
-  fallback 
-}: { 
+interface ErrorBoundaryProps {
   children: React.ReactNode
   fallback?: React.ReactNode
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="space-y-4"
-    >
-      {fallback ? fallback : children || (
-        <div className="glass rounded-2xl p-8 border border-red-500/30 text-center">
-          <AlertCircle className="w-8 h-8 text-red-400 mx-auto mb-3" />
-          <p className="text-slate-300">Something went wrong loading this section.</p>
-        </div>
-      )}
-    </motion.div>
-  )
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean
+}
+
+export class ErrorBoundarySection extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError(_: Error) {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('Section Error:', error, errorInfo)
+  }
+
+  render() {
+    if (this.state.hasError || (!this.props.children && !this.props.fallback)) {
+      return (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+          {this.props.fallback ? this.props.fallback : (
+            <div className="glass rounded-2xl p-8 border border-red-500/30 text-center">
+              <AlertCircle className="w-8 h-8 text-red-400 mx-auto mb-3" />
+              <p className="text-slate-300">Something went wrong loading this section.</p>
+              <button 
+                onClick={() => this.setState({ hasError: false })}
+                className="mt-4 px-4 py-2 text-sm rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-200 transition-colors font-medium"
+              >
+                Try Again
+              </button>
+            </div>
+          )}
+        </motion.div>
+      )
+    }
+    return <>{this.props.children}</>
+  }
 }
