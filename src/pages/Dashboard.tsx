@@ -75,189 +75,7 @@ const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
 const initialAcademicRoot: AcademicFacultyRoot = {
   id: 'CSE_FACULTY',
   name: 'Computer Science & Engineering',
-  departments: [
-    {
-      id: 'cse_dept',
-      name: 'Computer Science',
-      branches: [
-        {
-          id: 'cse_branch',
-          name: 'Computer Science',
-          sections: [
-            {
-              id: 'cse_section_a',
-              name: 'CSE Section A (Semester 3)',
-              subject: 'Data Structures & Algorithms',
-              faculty: 'Prof. Anita Sharma',
-              students: [
-                {
-                  id: 'CSE21001',
-                  name: 'Aarav Patel',
-                  email: 'aarav.patel@student.edu',
-                  attendancePct: 85,
-                  status: 'Active',
-                  phone: '+91-9876543001',
-                  semester: 3,
-                },
-                {
-                  id: 'CSE21002',
-                  name: 'Priya Sharma',
-                  email: 'priya.sharma@student.edu',
-                  attendancePct: 92,
-                  status: 'Active',
-                  phone: '+91-9876543002',
-                  semester: 3,
-                },
-                {
-                  id: 'CSE21003',
-                  name: 'Rahul Gupta',
-                  email: 'rahul.gupta@student.edu',
-                  attendancePct: 78,
-                  status: 'At Risk',
-                  phone: '+91-9876543003',
-                  semester: 3,
-                },
-                {
-                  id: 'CSE21004',
-                  name: 'Sneha Reddy',
-                  email: 'sneha.reddy@student.edu',
-                  attendancePct: 94,
-                  status: 'Active',
-                  phone: '+91-9876543004',
-                  semester: 3,
-                },
-              ],
-            },
-            {
-              id: 'cse_section_b',
-              name: 'CSE Section B (Semester 3)',
-              subject: 'Operating Systems',
-              faculty: 'Dr. Vikram Singh',
-              students: [
-                {
-                  id: 'CSE21005',
-                  name: 'Amit Kumar',
-                  email: 'amit.kumar@student.edu',
-                  attendancePct: 88,
-                  status: 'Active',
-                  phone: '+91-9876543005',
-                  semester: 3,
-                },
-                {
-                  id: 'CSE21006',
-                  name: 'Kavya Nair',
-                  email: 'kavya.nair@student.edu',
-                  attendancePct: 72,
-                  status: 'At Risk',
-                  phone: '+91-9876543006',
-                  semester: 3,
-                },
-              ],
-            },
-          ],
-        },
-        {
-          id: 'it_branch',
-          name: 'Information Technology',
-          sections: [
-            {
-              id: 'it_section_a',
-              name: 'IT Section A (Semester 2)',
-              subject: 'Programming Fundamentals',
-              faculty: 'Dr. Sarah Wilson',
-              students: [
-                {
-                  id: 'IT22001',
-                  name: 'Arjun Das',
-                  email: 'arjun.das@student.edu',
-                  attendancePct: 90,
-                  status: 'Active',
-                  phone: '+91-9876543007',
-                  semester: 2,
-                },
-                {
-                  id: 'IT22002',
-                  name: 'Meera Singh',
-                  email: 'meera.singh@student.edu',
-                  attendancePct: 86,
-                  status: 'Active',
-                  phone: '+91-9876543008',
-                  semester: 2,
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'ece_dept',
-      name: 'Electronics',
-      branches: [
-        {
-          id: 'ece_branch',
-          name: 'Electronics',
-          sections: [
-            {
-              id: 'ece_section_a',
-              name: 'ECE Section A (Semester 4)',
-              subject: 'Digital Electronics',
-              faculty: 'Prof. Rajesh Kumar',
-              students: [
-                {
-                  id: 'ECE20001',
-                  name: 'Karan Mehta',
-                  email: 'karan.mehta@student.edu',
-                  attendancePct: 82,
-                  status: 'Active',
-                  phone: '+91-9876543009',
-                  semester: 4,
-                },
-                {
-                  id: 'ECE20002',
-                  name: 'Pooja Verma',
-                  email: 'pooja.verma@student.edu',
-                  attendancePct: 95,
-                  status: 'Active',
-                  phone: '+91-9876543010',
-                  semester: 4,
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'mech_dept',
-      name: 'Mechanical',
-      branches: [
-        {
-          id: 'mech_branch',
-          name: 'Mechanical',
-          sections: [
-            {
-              id: 'mech_section_a',
-              name: 'Mech Section A (Semester 6)',
-              subject: 'Thermodynamics',
-              faculty: 'Dr. Suresh Patil',
-              students: [
-                {
-                  id: 'MECH19001',
-                  name: 'Anjali Desai',
-                  email: 'anjali.desai@student.edu',
-                  attendancePct: 91,
-                  status: 'Active',
-                  phone: '+91-9876543011',
-                  semester: 6,
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    },
-  ],
+  departments: [],
 }
 
 import {
@@ -269,6 +87,15 @@ import {
   startLiveMeeting,
   endLiveMeeting,
   subscribeToLiveMeetings,
+  subscribeToDoubtRequests,
+  updateDoubtRequestStatus,
+  createScheduledMeeting,
+  deleteScheduledMeeting,
+  subscribeToScheduledMeetings,
+  logActivity,
+  subscribeToNotifications,
+  createNotification,
+  updateUserPresenceStatus,
   type LiveMeetingInvite
 } from '../services/db'
 
@@ -295,9 +122,6 @@ export default function Dashboard() {
         const structure = await getAcademicStructure();
         if (structure && structure.length > 0) {
           setAcademicRoot(prev => ({ ...prev, departments: structure }));
-        } else {
-          // If empty, initialize it with the mock data to start
-          await saveAcademicStructure(initialAcademicRoot.departments);
         }
       } catch (err) {
         console.error("Failed to load academic structure", err);
@@ -315,6 +139,83 @@ export default function Dashboard() {
     return () => unsubscribe();
   }, []);
 
+  // Subscribe to doubt requests
+  useEffect(() => {
+    const unsubscribe = subscribeToDoubtRequests((requests) => {
+      const sorted = requests.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      setStudentDoubtRequests(sorted);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Subscribe to scheduled meetings
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsubscribe = subscribeToScheduledMeetings((meetings) => {
+      const parsed = meetings.map((m: any) => ({
+        id: m.id,
+        title: m.title,
+        date: new Date(m.scheduledDate),
+        duration: m.duration || 60,
+        participants: m.participants || [],
+        academicTarget: (m as any).academicTarget || undefined,
+        recurring: (m as any).recurring || 'none',
+        reminder: (m as any).reminder || 15,
+        meetingLink: (m as any).meetingLink || undefined,
+      } as ScheduledMeeting));
+
+      // Filter based on role and invites
+      const filtered = parsed.filter(m => {
+        if (currentUser.role === 'faculty') {
+          return (m as any).facultyId === currentUser.id || true; // Show all to faculty or filter by creator
+        } else {
+          // If it's targeted to a specific section/year/branch, check if the student belongs to it
+          const target = (m as any).academicTarget;
+          if (target) {
+            // Check if student belongs to invited branch/year/section
+            // Standard invite list check is safer:
+            return m.participants.includes(currentUser.studentId || currentUser.id);
+          }
+          return m.participants.includes(currentUser.studentId || currentUser.id);
+        }
+      });
+      setScheduledMeetings(filtered);
+    });
+    return () => unsubscribe();
+  }, [currentUser]);
+
+  // Subscribe to real notifications from Firestore
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsubscribe = subscribeToNotifications(currentUser.id, (notifs) => {
+      const parsed = notifs.map(n => ({
+        id: n.id,
+        title: n.title,
+        message: n.description,
+        timestamp: n.createdAt
+      }));
+      setActivityNotifications(parsed);
+    });
+    return () => unsubscribe();
+  }, [currentUser]);
+
+  // Track User Presence & Log logins
+  useEffect(() => {
+    if (!currentUser) return;
+    updateUserPresenceStatus(currentUser.id, 'online').catch(e => console.error("Error setting presence", e));
+    logActivity(currentUser.id, currentUser.name, 'User Login', `${currentUser.role} role`);
+
+    const handleUnload = () => {
+      updateUserPresenceStatus(currentUser.id, 'offline').catch(() => {});
+    };
+    window.addEventListener('beforeunload', handleUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      updateUserPresenceStatus(currentUser.id, 'offline').catch(() => {});
+    };
+  }, [currentUser]);
+
   // ==================== MEETING STATE ====================
   const [currentMeeting, setCurrentMeeting] = useState<{
     id: string
@@ -328,40 +229,7 @@ export default function Dashboard() {
   const [scheduledMeetings, setScheduledMeetings] = useState<ScheduledMeeting[]>([])
   const [liveMeetingInvite, setLiveMeetingInvite] = useState<LiveMeetingInvite | null>(null)
   const [activityNotifications, setActivityNotifications] = useState<ActivityNotification[]>([])
-  const [studentDoubtRequests, setStudentDoubtRequests] = useState<StudentDoubtRequest[]>([
-    {
-      id: 'dr-1',
-      topic: 'Data Structures',
-      preferredSlot: 'Today 5:30 PM',
-      requestedBy: 'Aarav Patel',
-      status: 'Sent',
-      createdAt: new Date(Date.now() - 1000 * 60 * 90),
-    },
-    {
-      id: 'dr-2',
-      topic: 'Operating Systems',
-      preferredSlot: 'Tomorrow 10:00 AM',
-      requestedBy: 'Priya Sharma',
-      status: 'Accepted',
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24),
-    },
-    {
-      id: 'dr-3',
-      topic: 'DBMS Lab',
-      preferredSlot: 'Friday 2:00 PM',
-      requestedBy: 'Rahul Gupta',
-      status: 'Rescheduled',
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 40),
-    },
-    {
-      id: 'dr-4',
-      topic: 'Computer Networks',
-      preferredSlot: 'Completed session',
-      requestedBy: 'Sneha Reddy',
-      status: 'Completed',
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 72),
-    },
-  ])
+  const [studentDoubtRequests, setStudentDoubtRequests] = useState<StudentDoubtRequest[]>([])
   const [showNotificationPanel, setShowNotificationPanel] = useState(false)
 
   const [showStudentSelection, setShowStudentSelection] = useState(false)
@@ -470,12 +338,11 @@ export default function Dashboard() {
     addActivityNotification('Meeting Started', `${meetingTitle} with ${selectedStudents.length} students.`)
 
     // Broadcast live meeting to Firestore
-    startLiveMeeting({
+    startLiveMeeting(meetingId, {
       id: meetingId,
       title: meetingTitle,
       sectionName: section.name,
       host: currentUser?.name || 'Host',
-      startedAt: new Date(),
       invitedStudents: selectedStudents.map(s => s.id)
     }).catch(err => {
       console.error("Failed to broadcast live meeting:", err);
@@ -553,19 +420,34 @@ export default function Dashboard() {
     const invite = liveMeetingInvite && liveMeetingInvite.id === meetingId ? liveMeetingInvite : null
     if (!invite) return
 
-    // Auto-construct a fake section and student list for the meeting room
-    // In a real app we'd fetch this from Firestore, but for now we just drop them in.
-    const mockSection: AcademicSection = {
-      id: 'mock-section',
+    // Find the real section in the academic structure first
+    let realSection: AcademicSection | undefined
+    for (const dept of academicRoot.departments) {
+      if (dept.branches) {
+        for (const branch of dept.branches) {
+          if (branch.sections) {
+            const found = branch.sections.find(s => s.name === invite.sectionName)
+            if (found) {
+              realSection = found
+              break
+            }
+          }
+        }
+      }
+      if (realSection) break
+    }
+
+    const sectionToUse: AcademicSection = realSection || {
+      id: 'dynamic-section',
       name: invite.sectionName,
-      students: [{ id: currentUser?.studentId || currentUser?.id || 'id', name: currentUser?.name || 'Student', email: '', attendancePct: 100, status: 'Active', phone: '', semester: 1 }]
-    };
+      students: []
+    }
 
     setCurrentMeeting({
       id: invite.id,
       title: invite.title,
-      section: mockSection,
-      selectedStudents: mockSection.students,
+      section: sectionToUse,
+      selectedStudents: sectionToUse.students,
       startedAt: invite.startedAt,
       attendanceMap: {},
     })
@@ -615,18 +497,48 @@ export default function Dashboard() {
     }
   }
 
-  const handleScheduleMeeting = (meeting: Omit<ScheduledMeeting, 'id'>) => {
-    const newMeeting: ScheduledMeeting = {
-      ...meeting,
-      id: `sch-${Date.now()}`,
+  const handleScheduleMeeting = async (meeting: Omit<ScheduledMeeting, 'id'>) => {
+    try {
+      const payload = {
+        title: meeting.title,
+        scheduledDate: meeting.date.toISOString(),
+        duration: meeting.duration,
+        participants: meeting.participants,
+        academicTarget: meeting.academicTarget || null,
+        recurring: meeting.recurring,
+        reminder: meeting.reminder,
+        meetingLink: meeting.meetingLink || '',
+        facultyId: currentUser?.id || 'Unknown',
+        facultyName: currentUser?.name || 'Faculty',
+        status: 'scheduled' as const,
+      };
+
+      await createScheduledMeeting(payload as any);
+      addToast('Meeting scheduled successfully.', 'success');
+
+      logActivity(currentUser!.id, currentUser!.name, 'Meeting Scheduled', meeting.title);
+      await createNotification({
+        userId: 'all',
+        title: 'Class Scheduled',
+        description: `"${meeting.title}" is scheduled for ${meeting.date.toLocaleString()}`,
+        type: 'info',
+        priority: 'medium',
+      });
+    } catch (err) {
+      console.error("Failed to schedule meeting:", err);
+      addToast('Failed to schedule meeting.', 'error');
     }
-    setScheduledMeetings((prev) => [newMeeting, ...prev])
-    addActivityNotification('Meeting Scheduled', `${newMeeting.title} on ${newMeeting.date.toLocaleString()}`)
   }
 
-  const handleDeleteScheduledMeeting = (id: string) => {
-    setScheduledMeetings((prev) => prev.filter((meeting) => meeting.id !== id))
-    addToast('Scheduled meeting deleted', 'info')
+  const handleDeleteScheduledMeeting = async (id: string) => {
+    try {
+      await deleteScheduledMeeting(id);
+      addToast('Scheduled meeting deleted', 'info');
+      logActivity(currentUser!.id, currentUser!.name, 'Meeting Cancelled', id);
+    } catch (err) {
+      console.error("Failed to delete scheduled meeting:", err);
+      addToast('Failed to delete scheduled meeting.', 'error');
+    }
   }
 
   const handlePlayRecording = (recordingUrl: string) => {
@@ -700,6 +612,26 @@ export default function Dashboard() {
     )
   }
 
+  // Calculate total students and branches from academicRoot structure dynamically
+  let totalStudents = 0
+  let totalBranches = 0
+  if (academicRoot && academicRoot.departments) {
+    academicRoot.departments.forEach(dept => {
+      if (dept.branches) {
+        totalBranches += dept.branches.length
+        dept.branches.forEach(branch => {
+          if (branch.sections) {
+            branch.sections.forEach(sec => {
+              if (sec.students) {
+                totalStudents += sec.students.length
+              }
+            })
+          }
+        })
+      }
+    })
+  }
+
   const recentMeetingPreview = meetingHistory.slice(0, 3)
   const now = new Date()
   const studentUpcomingMeetings = scheduledMeetings
@@ -727,45 +659,7 @@ export default function Dashboard() {
     .filter((meeting) => Boolean(meeting.recording || meeting.summary))
     .slice(0, 8)
 
-  const studentSharedResources = studentSharedResourcesRaw.length > 0
-    ? studentSharedResourcesRaw
-    : [
-      {
-        id: 'demo-rec-1',
-        title: 'DSA - Recursion Patterns',
-        date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-        duration: 55,
-        participants: ['Aarav Patel', 'Priya Sharma'],
-        host: 'Prof. Anita Sharma',
-        recording: 'https://example.com/recordings/dsa-recursion.mp4',
-        summary: 'Covered recursion design, base cases, and recurrence tracing. Demoed backtracking on subsets.',
-        keyPoints: ['Base cases first', 'Prevent infinite recursion', 'Backtracking example'],
-      },
-      {
-        id: 'demo-rec-2',
-        title: 'Operating Systems - CPU Scheduling',
-        date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
-        duration: 48,
-        participants: ['Amit Kumar', 'Kavya Nair'],
-        host: 'Dr. Vikram Singh',
-        recording: 'https://example.com/recordings/os-cpu-scheduling.mp4',
-        summary: 'FCFS vs SJF vs RR trade-offs; calculating waiting/turnaround times.',
-        keyPoints: ['FCFS', 'SJF', 'Round Robin', 'Gantt chart practice'],
-        autoSharedWithAbsent: true,
-      },
-      {
-        id: 'demo-rec-3',
-        title: 'Digital Electronics - Flip Flops',
-        date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-        duration: 42,
-        participants: ['Karan Mehta', 'Pooja Verma'],
-        host: 'Prof. Rajesh Kumar',
-        recording: 'https://example.com/recordings/digital-flipflops.mp4',
-        summary: 'SR, JK, D, T flip flops; setup/hold timing basics.',
-        keyPoints: ['SR latch', 'JK flip flop', 'Timing diagrams'],
-        absentMembers: ['Guest Student'],
-      },
-    ]
+  const studentSharedResources = studentSharedResourcesRaw
 
   const getResourceSubject = (title: string) => {
     const [prefix] = title.split('-')
@@ -815,6 +709,11 @@ export default function Dashboard() {
         request.id === requestId ? { ...request, status } : request
       ))
     })
+
+    updateDoubtRequestStatus(requestId, status).catch(err => {
+      console.error("Failed to update doubt request status in Firestore:", err);
+      addToast('Failed to sync status update to server.', 'error');
+    });
 
     const label = targetTopic || 'Doubt request'
     const statusMessage = status === 'Accepted'
@@ -866,6 +765,9 @@ export default function Dashboard() {
               <Suspense fallback={<div className="p-6">Loading dashboard…</div>}>
                 <FacultyStudentDashboard
                   role={currentUser?.role === 'faculty' ? 'faculty' : 'student'}
+                  totalStudentsCount={totalStudents}
+                  totalMeetingsCount={meetingHistory.length}
+                  totalRecordingsCount={meetingHistory.filter(m => m.recording).length}
                   onQuickStartMeeting={handleQuickStartMeeting}
                   onNavigate={(nav) => setSelectedNav(nav as AcademicNavItem)}
                   upcomingMeetings={studentUpcomingMeetings.map((meeting) => ({

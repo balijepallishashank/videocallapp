@@ -66,25 +66,31 @@ export default function YearSection({
       </div>
 
       <div className="space-y-3">
-        <AnimatePresence>
-          {visibleStudents.map((student) => (
-            <motion.div
-              key={student.uid}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-            >
-              <StudentCard
-                student={student}
-                isSelected={selectedIds.has(student.uid)}
-                isParticipant={participantIds.has(student.uid)}
-                selectable={canManageInvites}
-                draggableEnabled={canManageInvites}
-                onToggleSelect={onToggleStudent}
-              />
-            </motion.div>
-          ))}
-        </AnimatePresence>
+        {students.length === 0 ? (
+          <div className="text-center py-12 border border-dashed border-white/10 rounded-xl text-slate-500">
+            No students found in this section.
+          </div>
+        ) : (
+          <AnimatePresence>
+            {visibleStudents.map((student) => (
+              <motion.div
+                key={student.uid}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+              >
+                <StudentCard
+                  student={student}
+                  isSelected={selectedIds.has(student.uid)}
+                  isParticipant={participantIds.has(student.uid)}
+                  selectable={canManageInvites}
+                  draggableEnabled={canManageInvites}
+                  onToggleSelect={onToggleStudent}
+                />
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        )}
       </div>
 
       {visibleCount < students.length && (

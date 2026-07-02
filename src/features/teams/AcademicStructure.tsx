@@ -88,45 +88,7 @@ const avatarFromName = (name: string) =>
     .map((segment) => segment[0]?.toUpperCase() || '')
     .join('') || 'ST'
 
-const DEMO_NAMES = [
-  'Aarav Patel',
-  'Priya Sharma',
-  'Rahul Verma',
-  'Sneha Reddy',
-  'Karan Mehta',
-  'Pooja Nair',
-  'Arjun Das',
-  'Meera Iyer',
-  'Rohit Kumar',
-  'Ananya Singh',
-  'Vivek Gupta',
-  'Ishita Rao',
-]
 
-const createSeedStudents = (branchName: string, branchId: string, year: number, count = 8): AcademicStudent[] => {
-  const code = branchName
-    .replace(/\([^)]*\)/g, '')
-    .trim()
-    .split(/\s+/)
-    .map((part) => part[0])
-    .join('')
-    .slice(0, 4)
-    .toUpperCase() || 'STU'
-
-  return Array.from({ length: count }, (_, index) => {
-    const name = DEMO_NAMES[(year * 3 + index) % DEMO_NAMES.length]
-    const studentId = `${code}${year}${String(index + 1).padStart(3, '0')}`
-    return {
-      uid: `${branchId}-${studentId}`,
-      studentId,
-      name,
-      avatar: avatarFromName(name),
-      status: index % 4 === 0 ? 'offline' : 'online',
-      branchId,
-      year,
-    }
-  })
-}
 
 const mapStudentRecord = (student: StudentRecord, branchId: string, year: number): AcademicStudent => ({
   uid: `${branchId}-${student.id}`,
@@ -137,30 +99,6 @@ const mapStudentRecord = (student: StudentRecord, branchId: string, year: number
   branchId,
   year,
 })
-
-const buildDummyBranches = (): BranchNode[] => {
-  const branchNames = ['CSE', 'ECE', 'MECH', 'CIVIL']
-  return branchNames.map((name) => ({
-    id: `${name.toLowerCase()}_branch`,
-    name,
-    years: [1, 2, 3, 4].map((year) => ({
-      id: `${name.toLowerCase()}_y${year}`,
-      year,
-      students: Array.from({ length: 12 }, (_, index) => {
-        const roll = `${name}${year}${String(index + 1).padStart(3, '0')}`
-        return {
-          uid: `${name.toLowerCase()}_${year}_${index + 1}`,
-          studentId: roll,
-          name: `Student ${year}-${index + 1}`,
-          avatar: `S${index + 1}`,
-          status: index % 3 === 0 ? 'offline' : 'online',
-          branchId: `${name.toLowerCase()}_branch`,
-          year,
-        }
-      }),
-    })),
-  }))
-}
 
 const normalizeBranches = (root: AcademicFacultyRoot): BranchNode[] => {
   const normalized = root.departments.map((department: unknown) => {
@@ -185,26 +123,22 @@ const normalizeBranches = (root: AcademicFacultyRoot): BranchNode[] => {
 
     const years = [1, 2, 3, 4].map((year) => {
       const existing = (bucket.get(year) || []).sort((a, b) => a.name.localeCompare(b.name))
-      const students = existing.length > 0
-        ? existing
-        : createSeedStudents(dept.name, dept.id, year)
-
       return {
         id: `${dept.id}_year_${year}`,
         year,
-        students,
+        students: existing,
       }
     })
 
     return {
       id: dept.id,
       name: dept.name,
-      code: dept.code,
+      code: dept.code || dept.name.slice(0, 4).toUpperCase(),
       years,
     }
   })
 
-  return normalized.length > 0 ? normalized : buildDummyBranches()
+  return normalized
 }
 
 const toStudentRecord = (student: AcademicStudent): StudentRecord => ({

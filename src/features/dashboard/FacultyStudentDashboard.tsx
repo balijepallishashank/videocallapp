@@ -33,6 +33,9 @@ interface FacultyStudentDashboardProps {
   doubtRequests?: Array<{ id: string; topic: string; preferredSlot: string; requestedBy?: string; status: 'Sent' | 'Accepted' | 'Rescheduled' | 'Completed'; requestedAtLabel: string }>
   onRequestDoubtSession?: (payload: { topic: string; message: string; preferredSlot: string }) => void
   onUpdateDoubtRequestStatus?: (requestId: string, status: 'Sent' | 'Accepted' | 'Rescheduled' | 'Completed') => void
+  totalStudentsCount?: number
+  totalRecordingsCount?: number
+  totalMeetingsCount?: number
 }
 
 export default function FacultyStudentDashboard({
@@ -48,6 +51,9 @@ export default function FacultyStudentDashboard({
   doubtRequests = [],
   onRequestDoubtSession,
   onUpdateDoubtRequestStatus,
+  totalStudentsCount = 0,
+  totalRecordingsCount = 0,
+  totalMeetingsCount = 0,
 }: FacultyStudentDashboardProps) {
   const attendedCount = attendanceHistory.filter((item) => item.status === 'Attended').length
   const attendanceRate = attendanceHistory.length > 0 ? Math.round((attendedCount / attendanceHistory.length) * 100) : 0
@@ -227,7 +233,7 @@ export default function FacultyStudentDashboard({
               <Video className="w-4 h-4 text-blue-400" />
             </div>
           </div>
-          <div className="text-3xl font-bold text-blue-200">{role === 'faculty' ? 12 : upcomingMeetings.length}</div>
+          <div className="text-3xl font-bold text-blue-200">{role === 'faculty' ? totalMeetingsCount : upcomingMeetings.length}</div>
         </div>
 
         <div className="premium-card border border-white/10 hover:shadow-lg transition-all duration-300">
@@ -237,17 +243,17 @@ export default function FacultyStudentDashboard({
               <CheckCircle className="w-4 h-4 text-purple-400" />
             </div>
           </div>
-          <div className="text-3xl font-bold text-purple-200">{role === 'faculty' ? 5 : `${attendanceRate}%`}</div>
+          <div className="text-3xl font-bold text-purple-200">{role === 'faculty' ? totalRecordingsCount : `${attendanceRate}%`}</div>
         </div>
 
         <div className="premium-card border border-white/10 hover:shadow-lg transition-all duration-300">
           <div className="flex justify-between items-start mb-4">
-            <span className="text-slate-400 text-xs font-semibold uppercase tracking-wider">{role === 'faculty' ? 'Academic Units' : 'Shared Resources'}</span>
+            <span className="text-slate-400 text-xs font-semibold uppercase tracking-wider">{role === 'faculty' ? 'Total Students' : 'Shared Resources'}</span>
             <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
               <GraduationCap className="w-4 h-4 text-cyan-400" />
             </div>
           </div>
-          <div className="text-3xl font-bold text-cyan-200">{role === 'faculty' ? 3 : sharedResources.length}</div>
+          <div className="text-3xl font-bold text-cyan-200">{role === 'faculty' ? totalStudentsCount : sharedResources.length}</div>
         </div>
       </div>
 

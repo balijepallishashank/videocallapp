@@ -1,20 +1,23 @@
 import { useState, useRef, useEffect } from 'react'
 import { Pen, Eraser, Download, Trash2, Undo, Redo, Type, MousePointer2, ArrowLeft, Circle, Square as SquareIcon, Minus } from 'lucide-react'
-import { sendSyncMessage, registerSyncListener } from '../../services/syncChannel'
+import { saveWhiteboardStroke, clearWhiteboard, subscribeToWhiteboardStrokes } from '../../services/db'
 
 interface WhiteboardProps {
   onToast: (message: string, type: 'info' | 'success' | 'warning' | 'error') => void
   onClose?: () => void
+  meetingId?: string
+  currentUser?: { id: string; name: string }
 }
 
 type Tool = 'pen' | 'eraser' | 'text' | 'line' | 'circle' | 'square'
 
-export default function Whiteboard({ onToast, onClose }: WhiteboardProps) {
+export default function Whiteboard({ onToast, onClose, meetingId, currentUser }: WhiteboardProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const startPosRef = useRef<{ x: number; y: number } | null>(null)
   const snapshotRef = useRef<ImageData | null>(null)
   const lastPosRef = useRef<{ x: number; y: number } | null>(null)
+  const currentPointsRef = useRef<{ x: number; y: number }[]>([])
   const [isDrawing, setIsDrawing] = useState(false)
   const [tool, setTool] = useState<Tool>('pen')
   const [color, setColor] = useState('#3b82f6')
@@ -25,6 +28,7 @@ export default function Whiteboard({ onToast, onClose }: WhiteboardProps) {
   const [showTextInput, setShowTextInput] = useState(false)
   const [textInput, setTextInput] = useState('')
   const [textPosition, setTextPosition] = useState<{ x: number; y: number } | null>(null)
+  const [drawnIds] = useState(() => new Set<string>())
   
   // Simulated Multiplayer Cursors
   const MOCK_CURSORS = [
@@ -54,42 +58,64 @@ export default function Whiteboard({ onToast, onClose }: WhiteboardProps) {
   }, [])
 
   useEffect(() => {
-    const cleanup = registerSyncListener((type: string, payload: any) => {
-      if (type === 'WHITEBOARD_DRAW') {
-        const canvas = canvasRef.current
-        const ctx = canvas?.getContext('2d')
-        if (!canvas || !ctx) return
+    if (!meetingId) return
+
+    const unsubscribe = subscribeToWhiteboardStrokes(meetingId, (strokes) => {
+      const canvas = canvasRef.current
+      const ctx = canvas?.getContext('2d')
+      if (!canvas || !ctx) return
+
+      // Sort by timestamp
+      const sorted = [...strokes].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+
+      sorted.forEach((stroke: any) => {
+        if (drawnIds.has(stroke.id)) return
+        drawnIds.add(stroke.id)
 
         ctx.save()
-        ctx.beginPath()
-        ctx.strokeStyle = payload.tool === 'eraser' ? 'white' : payload.color
-        ctx.lineWidth = payload.tool === 'eraser' ? payload.lineWidth * 3 : payload.lineWidth
         ctx.lineCap = 'round'
         ctx.lineJoin = 'round'
 
-        if (payload.tool === 'pen' || payload.tool === 'eraser') {
-          ctx.moveTo(payload.x1, payload.y1)
-          ctx.lineTo(payload.x2, payload.y2)
-          ctx.stroke()
-        } else if (payload.tool === 'line') {
-          ctx.moveTo(payload.startX, payload.startY)
-          ctx.lineTo(payload.endX, payload.endY)
-          ctx.stroke()
-        } else if (payload.tool === 'square') {
-          ctx.strokeRect(payload.startX, payload.startY, payload.endX - payload.startX, payload.endY - payload.startY)
-        } else if (payload.tool === 'circle') {
-          const radius = Math.sqrt(Math.pow(payload.endX - payload.startX, 2) + Math.pow(payload.endY - payload.startY, 2))
-          ctx.arc(payload.startX, payload.startY, radius, 0, 2 * Math.PI)
-          ctx.stroke()
-        } else if (payload.tool === 'clear') {
+        if (stroke.type === 'clear') {
           ctx.fillStyle = 'white'
           ctx.fillRect(0, 0, canvas.width, canvas.height)
+        } else if (stroke.type === 'draw' && stroke.points && stroke.points.length > 1) {
+          ctx.beginPath()
+          ctx.strokeStyle = stroke.color
+          ctx.lineWidth = stroke.lineWidth
+          ctx.moveTo(stroke.points[0].x, stroke.points[0].y)
+          for (let i = 1; i < stroke.points.length; i++) {
+            ctx.lineTo(stroke.points[i].x, stroke.points[i].y)
+          }
+          ctx.stroke()
+        } else if (stroke.type === 'square' && stroke.points && stroke.points.length === 2) {
+          ctx.beginPath()
+          ctx.strokeStyle = stroke.color
+          ctx.lineWidth = stroke.lineWidth
+          const w = stroke.points[1].x - stroke.points[0].x
+          const h = stroke.points[1].y - stroke.points[0].y
+          ctx.strokeRect(stroke.points[0].x, stroke.points[0].y, w, h)
+        } else if (stroke.type === 'circle' && stroke.points && stroke.points.length === 2) {
+          ctx.beginPath()
+          ctx.strokeStyle = stroke.color
+          ctx.lineWidth = stroke.lineWidth
+          const radius = Math.sqrt(
+            Math.pow(stroke.points[1].x - stroke.points[0].x, 2) +
+            Math.pow(stroke.points[1].y - stroke.points[0].y, 2)
+          )
+          ctx.arc(stroke.points[0].x, stroke.points[0].y, radius, 0, 2 * Math.PI)
+          ctx.stroke()
+        } else if (stroke.type === 'text' && stroke.points && stroke.points.length === 1 && stroke.textValue) {
+          ctx.font = '20px Arial'
+          ctx.fillStyle = stroke.color
+          ctx.fillText(stroke.textValue, stroke.points[0].x, stroke.points[0].y)
         }
         ctx.restore()
-      }
+      })
     })
-    return () => cleanup()
-  }, [])
+
+    return () => unsubscribe()
+  }, [meetingId, drawnIds])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -178,7 +204,12 @@ export default function Whiteboard({ onToast, onClose }: WhiteboardProps) {
     ctx.fillStyle = 'white'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
     saveState()
-    sendSyncMessage('WHITEBOARD_DRAW', { tool: 'clear' })
+
+    if (meetingId) {
+      clearWhiteboard(meetingId, currentUser?.id || 'Unknown', currentUser?.name || 'User')
+        .catch(err => console.error("Error clearing whiteboard:", err))
+    }
+
     onToast('Whiteboard cleared', 'info')
   }
 
@@ -212,6 +243,7 @@ export default function Whiteboard({ onToast, onClose }: WhiteboardProps) {
     startPosRef.current = { x, y }
     lastPosRef.current = { x, y }
     snapshotRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    currentPointsRef.current = [{ x, y }]
 
     ctx.beginPath()
     ctx.moveTo(x, y)
@@ -244,17 +276,8 @@ export default function Whiteboard({ onToast, onClose }: WhiteboardProps) {
         ctx.lineCap = 'round'
         ctx.lineJoin = 'round'
         ctx.stroke()
-        
-        sendSyncMessage('WHITEBOARD_DRAW', {
-          tool,
-          x1: lastPosRef.current.x,
-          y1: lastPosRef.current.y,
-          x2: x,
-          y2: y,
-          color,
-          lineWidth
-        })
-        
+
+        currentPointsRef.current.push({ x, y })
         lastPosRef.current = { x, y }
       }
     } else if (startPosRef.current && snapshotRef.current) {
@@ -264,10 +287,10 @@ export default function Whiteboard({ onToast, onClose }: WhiteboardProps) {
       ctx.lineWidth = lineWidth
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
-      
+
       const startX = startPosRef.current.x
       const startY = startPosRef.current.y
-      
+
       if (tool === 'line') {
         ctx.moveTo(startX, startY)
         ctx.lineTo(x, y)
@@ -291,21 +314,32 @@ export default function Whiteboard({ onToast, onClose }: WhiteboardProps) {
       const x = rect ? e.clientX - rect.left : 0
       const y = rect ? e.clientY - rect.top : 0
 
-      if (startPosRef.current && (tool === 'line' || tool === 'square' || tool === 'circle')) {
-        sendSyncMessage('WHITEBOARD_DRAW', {
-          tool,
-          startX: startPosRef.current.x,
-          startY: startPosRef.current.y,
-          endX: x,
-          endY: y,
-          color,
-          lineWidth
-        })
+      if (meetingId) {
+        if (tool === 'pen' || tool === 'eraser') {
+          saveWhiteboardStroke(meetingId, {
+            senderId: currentUser?.id || 'Unknown',
+            senderName: currentUser?.name || 'User',
+            type: 'draw',
+            points: currentPointsRef.current,
+            color: tool === 'eraser' ? '#ffffff' : color,
+            lineWidth: tool === 'eraser' ? lineWidth * 3 : lineWidth
+          }).catch(err => console.error("Error saving whiteboard stroke:", err))
+        } else if (startPosRef.current && (tool === 'line' || tool === 'square' || tool === 'circle')) {
+          saveWhiteboardStroke(meetingId, {
+            senderId: currentUser?.id || 'Unknown',
+            senderName: currentUser?.name || 'User',
+            type: tool === 'line' ? 'draw' : tool as any,
+            points: [startPosRef.current, { x, y }],
+            color,
+            lineWidth
+          }).catch(err => console.error("Error saving whiteboard shape:", err))
+        }
       }
 
       startPosRef.current = null
       lastPosRef.current = null
       snapshotRef.current = null
+      currentPointsRef.current = []
       saveState()
     }
   }
@@ -334,6 +368,19 @@ export default function Whiteboard({ onToast, onClose }: WhiteboardProps) {
     ctx.font = `${fontSize}px Arial`
     ctx.fillStyle = color
     ctx.fillText(textInput, textPosition.x, textPosition.y + fontSize)
+
+    if (meetingId) {
+      saveWhiteboardStroke(meetingId, {
+        senderId: currentUser?.id || 'Unknown',
+        senderName: currentUser?.name || 'User',
+        type: 'text',
+        points: [textPosition],
+        color,
+        lineWidth: fontSize,
+        textValue: textInput
+      }).catch(err => console.error("Error saving text stroke:", err))
+    }
+
     saveState()
     setShowTextInput(false)
     setTextInput('')

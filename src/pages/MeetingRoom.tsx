@@ -44,6 +44,10 @@ import {
   type IMicrophoneAudioTrack,
   type RemoteParticipant,
 } from '../services/video'
+import {
+  sendChatMessage,
+  subscribeToChatMessages
+} from '../services/db'
 
 interface MeetingParticipant {
   id: string
@@ -118,19 +122,35 @@ export default function MeetingRoom({
     message: string
     timestamp: Date
     isSystem?: boolean
-  }>>([
-    {
-      id: '1',
-      sender: 'System',
-      message: `${currentUser.name} started the meeting`,
-      timestamp: new Date(),
-      isSystem: true
-    }
-  ])
+  }>>([])
   const [newMessage, setNewMessage] = useState('')
+  const chatEndRef = useRef<HTMLDivElement>(null)
+
+  // Real-time chat subscription
+  useEffect(() => {
+    if (!meetingId) return;
+    const unsubscribe = subscribeToChatMessages(meetingId, (messages) => {
+      const formatted = messages.map((msg) => ({
+        id: msg.id,
+        sender: msg.senderName,
+        message: msg.message,
+        timestamp: msg.timestamp,
+        isSystem: msg.senderName === 'System',
+      }))
+      setChatMessages(formatted)
+    })
+    return () => unsubscribe()
+  }, [meetingId])
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chatMessages])
   
   const videoRef = useRef<HTMLVideoElement>(null)
   const screenShareStreamRef = useRef<MediaStream | null>(null)
+  const processingCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const stopProcessingRef = useRef<(() => void) | null>(null)
   const [showToolPanel, setShowToolPanel] = useState<'whiteboard' | 'breakoutRooms' | 'screenRecording' | 'virtualBg' | 'waitingRoom' | null>(null)
   const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: 'info' | 'success' | 'warning' | 'error' }>>([])
   const [mediaError, setMediaError] = useState<string | null>(null)
@@ -357,6 +377,42 @@ export default function MeetingRoom({
     }
   }, [])
 
+  // Virtual background pipeline
+  useEffect(() => {
+    import('../services/videoProcessor').then(({ setBackgroundConfig, startStreamProcessing }) => {
+      setBackgroundConfig(virtualBg.id, virtualBg.blur ?? 10, virtualBg.url || null);
+
+      if (!agoraVideoTrack) return;
+
+      if (stopProcessingRef.current) {
+        stopProcessingRef.current();
+        stopProcessingRef.current = null;
+      }
+
+      if (!processingCanvasRef.current) {
+        processingCanvasRef.current = document.createElement('canvas');
+      }
+
+      const rawStream = localStreamRef.current;
+      if (!rawStream) return;
+
+      const stop = startStreamProcessing(rawStream, processingCanvasRef.current, (processedTrack) => {
+        agoraVideoTrack.replaceTrack(processedTrack, true).catch(err => {
+          console.error("Failed to replace Agora video track:", err);
+        });
+      });
+
+      stopProcessingRef.current = stop;
+    });
+
+    return () => {
+      if (stopProcessingRef.current) {
+        stopProcessingRef.current();
+        stopProcessingRef.current = null;
+      }
+    };
+  }, [virtualBg, agoraVideoTrack])
+
   // Format meeting duration
   const formatDuration = (seconds: number) => {
     const hrs = Math.floor(seconds / 3600)
@@ -548,18 +604,20 @@ export default function MeetingRoom({
     ...participants,
   ]
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     if (newMessage.trim()) {
-      setChatMessages(prev => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          sender: currentUser.name,
-          message: newMessage.trim(),
-          timestamp: new Date(),
-        },
-      ])
-      setNewMessage('')
+      const text = newMessage.trim();
+      setNewMessage('');
+      try {
+        await sendChatMessage(meetingId, {
+          senderId: currentUser.id,
+          senderName: currentUser.name,
+          senderRole: currentUser.role,
+          message: text,
+        });
+      } catch (err) {
+        console.error("Failed to send message to Firestore:", err);
+      }
     }
   }
 
@@ -1217,6 +1275,7 @@ export default function MeetingRoom({
                       </div>
                     ))
                   )}
+                  <div ref={chatEndRef} />
                 </div>
                 
                 <div className="flex gap-2">
@@ -1242,7 +1301,7 @@ export default function MeetingRoom({
             {/* Tool Panels */}
             {showToolPanel === 'whiteboard' && (
               <div className="flex-1 overflow-y-auto p-3">
-                <Whiteboard onToast={addToast} />
+                <Whiteboard onToast={addToast} meetingId={meetingId} currentUser={currentUser} />
               </div>
             )}
 

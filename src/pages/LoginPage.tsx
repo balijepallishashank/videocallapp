@@ -17,18 +17,6 @@ export interface FacultyRegistrationDetails {
   password?: string
 }
 
-const DEMO_FACULTY_EMAIL = 'faculty@demo.com'
-const DEMO_STUDENT_EMAIL = 'student@demo.com'
-
-const isInvalidCredentialError = (error: unknown) => {
-  if (!error || typeof error !== 'object' || !('code' in error)) return false
-  const code = String((error as { code?: unknown }).code || '')
-  return [
-    'auth/invalid-credential',
-    'auth/invalid-login-credentials',
-    'auth/user-not-found',
-  ].includes(code)
-}
 
 export default function LoginPage() {
   const { login, register } = useAuth()
@@ -51,21 +39,6 @@ export default function LoginPage() {
   const [phoneNumber, setPhoneNumber] = useState('')
   const [designation, setDesignation] = useState('')
 
-  const ensureDemoAccountThenLogin = async (normalizedEmail: string, currentPassword: string) => {
-    if (normalizedEmail === DEMO_FACULTY_EMAIL) {
-      await register(DEMO_FACULTY_EMAIL, currentPassword, 'faculty', 'Demo Faculty', 'FAC-DEMO')
-      await login(DEMO_FACULTY_EMAIL, currentPassword)
-      return true
-    }
-
-    if (normalizedEmail === DEMO_STUDENT_EMAIL) {
-      await register(DEMO_STUDENT_EMAIL, currentPassword, 'student', 'Demo Student', 'STU001')
-      await login(DEMO_STUDENT_EMAIL, currentPassword)
-      return true
-    }
-
-    return false
-  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -119,22 +92,6 @@ export default function LoginPage() {
       setIsLoading(false)
       navigate('/')
     } catch (err: unknown) {
-      const normalizedEmail = email.trim().toLowerCase()
-      const isDemoLoginFlow = !isSignUp && isInvalidCredentialError(err)
-
-      if (isDemoLoginFlow) {
-        try {
-          const didProvision = await ensureDemoAccountThenLogin(normalizedEmail, password)
-          if (didProvision) {
-            setIsLoading(false)
-            navigate('/')
-            return
-          }
-        } catch {
-          // Fall through to the original error message
-        }
-      }
-
       setIsLoading(false)
       setError(err instanceof Error ? err.message : 'An error occurred')
     }
@@ -464,22 +421,7 @@ export default function LoginPage() {
             </motion.button>
           </form>
 
-          {/* Demo Credentials */}
-          {!isSignUp && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.5 }}
-              className="mt-6 p-4 rounded-lg bg-slate-800/30 border border-slate-700/50"
-            >
-              <p className="text-xs text-slate-400 mb-2 font-medium">Demo Credentials:</p>
-              <div className="space-y-1 text-xs text-slate-300">
-                <p>Faculty: <span className="font-mono text-amber-300">faculty@demo.com / any 6+ char password</span></p>
-                <p>Student: <span className="font-mono text-cyan-300">STU001 + student@demo.com / any 6+ char password</span></p>
-                <p className="text-[11px] text-slate-500">Demo accounts are created automatically on first successful demo login attempt.</p>
-              </div>
-            </motion.div>
-          )}
+
         </motion.div>
 
         {/* Footer Text */}
