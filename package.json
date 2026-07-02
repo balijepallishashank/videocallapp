@@ -14,15 +14,20 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
+    "agora-rtc-react": "^2.5.1",
+    "agora-rtc-sdk-ng": "^4.24.5",
     "clsx": "^2.1.0",
     "date-fns": "^4.1.0",
+    "firebase": "^12.15.0",
     "framer-motion": "^10.16.16",
     "lucide-react": "^0.378.0",
     "qrcode.react": "^4.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-router-dom": "^7.18.1",
     "tailwind-merge": "^2.2.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "xlsx-js-style": "^1.2.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.3",
