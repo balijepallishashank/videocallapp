@@ -30,6 +30,12 @@ service cloud.firestore {
       allow write: if isFaculty(); // Only faculty can create/update meetings
     }
 
+    // Live meeting signaling
+    match /live_meetings/{meetingId} {
+      allow read: if isAuthenticated();
+      allow write: if isFaculty();
+    }
+
     // Requests (Doubt requests, notifications)
     match /requests/{requestId} {
       allow read: if isAuthenticated() && (resource.data.requestedBy == request.auth.uid || isFaculty());

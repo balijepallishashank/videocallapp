@@ -9,7 +9,7 @@ interface BranchOption {
 interface AddStudentFormProps {
   branchOptions: BranchOption[]
   onAddBranch: (branchName: string) => void
-  onAddStudent: (payload: { name: string; studentId: string; branchId: string; year: number }) => void
+  onAddStudent: (payload: { name: string; studentId: string; branchId: string; year: number }) => Promise<boolean>
 }
 
 export default function AddStudentForm({ branchOptions, onAddBranch, onAddStudent }: AddStudentFormProps) {
@@ -24,7 +24,7 @@ export default function AddStudentForm({ branchOptions, onAddBranch, onAddStuden
 function AddBranchCard({ onAddBranch }: Pick<AddStudentFormProps, 'onAddBranch'>) {
   return (
     <form
-      onSubmit={(event) => {
+      onSubmit={async (event) => {
         event.preventDefault()
         const formData = new FormData(event.currentTarget)
         const branchName = String(formData.get('branchName') || '').trim()
@@ -55,7 +55,7 @@ function AddBranchCard({ onAddBranch }: Pick<AddStudentFormProps, 'onAddBranch'>
 function AddStudentCard({ branchOptions, onAddStudent }: Omit<AddStudentFormProps, 'onAddBranch'>) {
   return (
     <form
-      onSubmit={(event) => {
+      onSubmit={async (event) => {
         event.preventDefault()
         const formData = new FormData(event.currentTarget)
         const name = String(formData.get('name') || '').trim()
@@ -64,8 +64,9 @@ function AddStudentCard({ branchOptions, onAddStudent }: Omit<AddStudentFormProp
         const year = Number(formData.get('year') || 1)
 
         if (!name || !studentId || !branchId) return
-        onAddStudent({ name, studentId, branchId, year })
-        event.currentTarget.reset()
+        const form = event.currentTarget
+        const added = await onAddStudent({ name, studentId, branchId, year })
+        if (added) form.reset()
       }}
       className="rounded-2xl border border-white/10 bg-slate-900/40 backdrop-blur p-4 shadow-lg"
     >

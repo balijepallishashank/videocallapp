@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Bell, CalendarDays, CheckCheck, Download, FileText, Users } from 'lucide-react'
+import { Bell, CalendarDays, CheckCheck, Copy, Download, FileText, Users, X } from 'lucide-react'
 import { lazy, Suspense } from 'react'
 import type {
   AcademicDepartment,
@@ -43,7 +43,36 @@ interface AcademicStructureProps {
   onAcademicRootChange?: (departments: AcademicDepartment[]) => void
 }
 
+interface GeneratedStudentCredentials {
+  name: string
+  studentId: string
+  email: string
+  password: string
+}
+
 const ORDINALS = ['1st', '2nd', '3rd', '4th']
+
+const BRANCH_DISPLAY_ALIASES: Record<string, string> = {
+  cse: 'Computer Science & Engineering',
+  'computer science': 'Computer Science & Engineering',
+  'computer science engineering': 'Computer Science & Engineering',
+  'computer science and engineering': 'Computer Science & Engineering',
+}
+
+const normalizeBranchToken = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+const canonicalBranchDisplayName = (value: string) => {
+  const normalized = normalizeBranchToken(value)
+  return BRANCH_DISPLAY_ALIASES[normalized] || value.trim().replace(/\s+/g, ' ')
+}
+
+const canonicalBranchKey = (value: string) => normalizeBranchToken(canonicalBranchDisplayName(value))
 
 const yearFromStudent = (student: StudentRecord) => {
   if (student.yearNumber && student.yearNumber > 0) return Math.min(4, Math.max(1, student.yearNumber))
@@ -224,6 +253,7 @@ export default function AcademicStructure({
 }: AcademicStructureProps) {
   const [branches, setBranches] = useState<BranchNode[]>(() => normalizeBranches(facultyRoot))
   const isHydratingFromPropsRef = useRef(false)
+  const lastSyncedDepartmentsRef = useRef<string>('')
   const [activeBranchId, setActiveBranchId] = useState<string | null>(null)
   const [activeYearId, setActiveYearId] = useState<string | null>(null)
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set())
@@ -231,11 +261,46 @@ export default function AcademicStructure({
   const [visibleCount, setVisibleCount] = useState(30)
   const [isDragOver, setIsDragOver] = useState(false)
   const [toasts, setToasts] = useState<SelectorToast[]>([])
+  const [generatedCredentials, setGeneratedCredentials] = useState<GeneratedStudentCredentials | null>(null)
   const isFaculty = role === 'faculty'
+
+  const copyCredentials = async (credentials: GeneratedStudentCredentials) => {
+    const text = [
+      `Name: ${credentials.name}`,
+      `Student ID: ${credentials.studentId}`,
+      `Email: ${credentials.email}`,
+      `Password: ${credentials.password}`,
+    ].join('\n')
+
+    try {
+      await navigator.clipboard.writeText(text)
+      pushToast('Credentials copied to clipboard', 'success')
+    } catch {
+      pushToast('Unable to copy credentials. Please copy manually.', 'error')
+    }
+  }
+
+  const downloadCredentialsCsv = (credentials: GeneratedStudentCredentials) => {
+    const rows = [
+      'name,studentId,email,password',
+      `${credentials.name},${credentials.studentId},${credentials.email},${credentials.password}`,
+    ]
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `student_credentials_${credentials.studentId}.csv`
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
+    URL.revokeObjectURL(url)
+  }
 
   useEffect(() => {
     isHydratingFromPropsRef.current = true
-    setBranches(normalizeBranches(facultyRoot))
+    const normalized = normalizeBranches(facultyRoot)
+    lastSyncedDepartmentsRef.current = JSON.stringify(toDepartmentsPayload(normalized))
+    setBranches(normalized)
   }, [facultyRoot])
 
   useEffect(() => {
@@ -244,8 +309,19 @@ export default function AcademicStructure({
       return
     }
     if (!onAcademicRootChange) return
-    onAcademicRootChange(toDepartmentsPayload(branches))
-  }, [branches, onAcademicRootChange])
+
+    const payload = toDepartmentsPayload(branches)
+    const payloadKey = JSON.stringify(payload)
+    const incomingKey = JSON.stringify(facultyRoot.departments)
+    if (payloadKey === incomingKey) {
+      lastSyncedDepartmentsRef.current = payloadKey
+      return
+    }
+    if (payloadKey === lastSyncedDepartmentsRef.current) return
+
+    lastSyncedDepartmentsRef.current = payloadKey
+    onAcademicRootChange(payload)
+  }, [branches, facultyRoot.departments, onAcademicRootChange])
 
   useEffect(() => {
     if (!activeBranchId && branches[0]) {
@@ -422,14 +498,15 @@ export default function AcademicStructure({
 
   const addBranch = (branchName: string) => {
     if (!isFaculty) return
-    const normalized = branchName.trim()
+    const normalized = canonicalBranchDisplayName(branchName)
+    const normalizedKey = canonicalBranchKey(normalized)
     if (!normalized) return
 
     setBranches((previous) => {
-      const exists = previous.some((branch) => branch.name.toLowerCase() === normalized.toLowerCase())
+      const exists = previous.some((branch) => canonicalBranchKey(branch.name) === normalizedKey)
       if (exists) return previous
 
-      const id = `${normalized.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}`
+      const id = `${normalizedKey.replace(/\s+/g, '_')}_${Date.now()}`
       const created: BranchNode = {
         id,
         name: normalized,
@@ -448,11 +525,32 @@ export default function AcademicStructure({
     })
   }
 
-  const addStudent = (payload: { name: string; studentId: string; branchId: string; year: number }) => {
-    if (!isFaculty) return
+  const addStudent = async (payload: { name: string; studentId: string; branchId: string; year: number }) => {
+    if (!isFaculty) return false
     const cleanedName = payload.name.trim()
     const cleanedStudentId = payload.studentId.trim()
-    if (!cleanedName || !cleanedStudentId) return
+    if (!cleanedName || !cleanedStudentId) return false
+
+    const alreadyListed = Array.from(studentMap.values()).some(
+      (student) => student.studentId.toLowerCase() === cleanedStudentId.toLowerCase(),
+    )
+    if (alreadyListed) {
+      pushToast(`Student ID ${cleanedStudentId} is already in the academic structure`, 'error')
+      return false
+    }
+
+    const { generatePassword, registerStudentAccount, studentEmail } = await import('./academic-selector/studentAuth')
+    const email = studentEmail(cleanedStudentId)
+    const password = generatePassword()
+    let accountStatus: 'created' | 'exists' = 'created'
+
+    try {
+      accountStatus = await registerStudentAccount(cleanedName, cleanedStudentId, email, password)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unable to create the Firebase account'
+      pushToast(`Student was not added: ${message}`, 'error')
+      return false
+    }
 
     setBranches((previous) =>
       previous.map((branch) => {
@@ -480,44 +578,39 @@ export default function AcademicStructure({
 
     setActiveBranchId(payload.branchId)
     setActiveYearId(`${payload.branchId}_year_${payload.year}`)
-
-    // Register Firebase Auth account in the background (fire-and-forget)
-    const email = `${cleanedStudentId.toLowerCase().replace(/\s+/g, '')}@student.edu`
-    const password = (() => {
-      const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$'
-      let p = ''
-      for (let i = 0; i < 10; i++) p += chars.charAt(Math.floor(Math.random() * chars.length))
-      return p
-    })()
-
-    import('./academic-selector/studentAuth').then(({ registerStudentAccount }) => {
-      registerStudentAccount(cleanedName, cleanedStudentId, email, password).catch(console.warn)
-    })
-
+    if (accountStatus === 'created') {
+      setGeneratedCredentials({ name: cleanedName, studentId: cleanedStudentId, email, password })
+    } else {
+      setGeneratedCredentials(null)
+      pushToast(`Student added. Account already existed for ${email}, so no new password was generated.`, 'info')
+    }
     pushToast(`${cleanedName} added successfully`, 'success')
+    return true
   }
 
   const uploadRows = (rows: UploadRow[]) => {
     if (!isFaculty) return
     const byBranch = new Map<string, UploadRow[]>()
     rows.forEach((row) => {
-      const key = row.branch.trim()
+      const displayName = canonicalBranchDisplayName(row.branch)
+      const key = canonicalBranchKey(displayName)
       const existing = byBranch.get(key) || []
-      existing.push(row)
+      existing.push({ ...row, branch: displayName })
       byBranch.set(key, existing)
     })
 
     setBranches((previous) => {
       let next = [...previous]
 
-      byBranch.forEach((items, branchName) => {
-        let branch = next.find((item) => item.name.toLowerCase() === branchName.toLowerCase())
+      byBranch.forEach((items, branchKey) => {
+        const displayName = items[0]?.branch || 'Branch'
+        let branch = next.find((item) => canonicalBranchKey(item.name) === branchKey)
         if (!branch) {
-          const id = `${branchName.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`
+          const id = `${branchKey.replace(/\s+/g, '_')}_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`
           branch = {
             id,
-            name: branchName,
-            code: branchName.slice(0, 4).toUpperCase(),
+            name: displayName,
+            code: displayName.slice(0, 4).toUpperCase(),
             years: [1, 2, 3, 4].map((year) => ({
               id: `${id}_year_${year}`,
               year,
@@ -814,10 +907,10 @@ export default function AcademicStructure({
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 16 }}
               className={`rounded-xl border px-4 py-2 text-sm shadow-lg backdrop-blur ${toast.type === 'success'
-                  ? 'bg-emerald-500/20 border-emerald-300/30 text-emerald-100'
-                  : toast.type === 'error'
-                    ? 'bg-rose-500/20 border-rose-300/30 text-rose-100'
-                    : 'bg-slate-700/40 border-slate-400/30 text-slate-100'
+                ? 'bg-emerald-500/20 border-emerald-300/30 text-emerald-100'
+                : toast.type === 'error'
+                  ? 'bg-rose-500/20 border-rose-300/30 text-rose-100'
+                  : 'bg-slate-700/40 border-slate-400/30 text-slate-100'
                 }`}
             >
               {toast.message}
@@ -825,6 +918,69 @@ export default function AcademicStructure({
           ))}
         </AnimatePresence>
       </div>
+
+      <AnimatePresence>
+        {generatedCredentials && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 16, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 16, scale: 0.97 }}
+              className="w-full max-w-lg rounded-2xl border border-cyan-400/30 bg-slate-900 p-5 shadow-2xl"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-base font-semibold text-cyan-100">Student account created</h3>
+                  <p className="mt-1 text-sm text-slate-300">Share these credentials securely with the student.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setGeneratedCredentials(null)}
+                  className="rounded-lg p-2 text-slate-300 hover:bg-slate-800"
+                  aria-label="Close credentials dialog"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/70 p-4 text-sm">
+                <div className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-2 text-slate-200">
+                  <span className="text-slate-400">Name</span>
+                  <span>{generatedCredentials.name}</span>
+                  <span className="text-slate-400">Student ID</span>
+                  <span>{generatedCredentials.studentId}</span>
+                  <span className="text-slate-400">Email</span>
+                  <span className="font-mono text-cyan-200 break-all">{generatedCredentials.email}</span>
+                  <span className="text-slate-400">Password</span>
+                  <span className="font-mono text-amber-200 break-all">{generatedCredentials.password}</span>
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => copyCredentials(generatedCredentials)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100 hover:bg-cyan-500/20"
+                >
+                  <Copy className="h-4 w-4" /> Copy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadCredentialsCsv(generatedCredentials)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100 hover:bg-emerald-500/20"
+                >
+                  <Download className="h-4 w-4" /> Download CSV
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

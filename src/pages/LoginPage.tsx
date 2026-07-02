@@ -17,6 +17,19 @@ export interface FacultyRegistrationDetails {
   password?: string
 }
 
+const DEMO_FACULTY_EMAIL = 'faculty@demo.com'
+const DEMO_STUDENT_EMAIL = 'student@demo.com'
+
+const isInvalidCredentialError = (error: unknown) => {
+  if (!error || typeof error !== 'object' || !('code' in error)) return false
+  const code = String((error as { code?: unknown }).code || '')
+  return [
+    'auth/invalid-credential',
+    'auth/invalid-login-credentials',
+    'auth/user-not-found',
+  ].includes(code)
+}
+
 export default function LoginPage() {
   const { login, register } = useAuth()
   const navigate = useNavigate()
@@ -37,6 +50,22 @@ export default function LoginPage() {
   const [facultyId, setFacultyId] = useState('')
   const [phoneNumber, setPhoneNumber] = useState('')
   const [designation, setDesignation] = useState('')
+
+  const ensureDemoAccountThenLogin = async (normalizedEmail: string, currentPassword: string) => {
+    if (normalizedEmail === DEMO_FACULTY_EMAIL) {
+      await register(DEMO_FACULTY_EMAIL, currentPassword, 'faculty', 'Demo Faculty', 'FAC-DEMO')
+      await login(DEMO_FACULTY_EMAIL, currentPassword)
+      return true
+    }
+
+    if (normalizedEmail === DEMO_STUDENT_EMAIL) {
+      await register(DEMO_STUDENT_EMAIL, currentPassword, 'student', 'Demo Student', 'STU001')
+      await login(DEMO_STUDENT_EMAIL, currentPassword)
+      return true
+    }
+
+    return false
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -79,16 +108,33 @@ export default function LoginPage() {
     // Simulate API call
     setIsLoading(true)
     try {
+      const normalizedEmail = email.trim().toLowerCase()
       if (isSignUp && selectedRole === 'faculty') {
-        await register(email, password, 'faculty', facultyName, facultyId)
+        await register(normalizedEmail, password, 'faculty', facultyName, facultyId)
       } else if (selectedRole === 'faculty') {
-        await login(email, password)
+        await login(normalizedEmail, password)
       } else {
-        await login(email, password)
+        await login(normalizedEmail, password)
       }
       setIsLoading(false)
       navigate('/')
     } catch (err: unknown) {
+      const normalizedEmail = email.trim().toLowerCase()
+      const isDemoLoginFlow = !isSignUp && isInvalidCredentialError(err)
+
+      if (isDemoLoginFlow) {
+        try {
+          const didProvision = await ensureDemoAccountThenLogin(normalizedEmail, password)
+          if (didProvision) {
+            setIsLoading(false)
+            navigate('/')
+            return
+          }
+        } catch {
+          // Fall through to the original error message
+        }
+      }
+
       setIsLoading(false)
       setError(err instanceof Error ? err.message : 'An error occurred')
     }
@@ -150,11 +196,10 @@ export default function LoginPage() {
                 setError('')
                 setConfirmPassword('')
               }}
-              className={`flex-1 py-2 rounded-lg font-medium transition-all ${
-                !isSignUp
+              className={`flex-1 py-2 rounded-lg font-medium transition-all ${!isSignUp
                   ? 'bg-blue-500 text-white'
                   : 'text-slate-400 hover:text-slate-300'
-              }`}
+                }`}
             >
               Login
             </motion.button>
@@ -165,11 +210,10 @@ export default function LoginPage() {
                 setIsSignUp(true)
                 setError('')
               }}
-              className={`flex-1 py-2 rounded-lg font-medium transition-all ${
-                isSignUp
+              className={`flex-1 py-2 rounded-lg font-medium transition-all ${isSignUp
                   ? 'bg-purple-500 text-white'
                   : 'text-slate-400 hover:text-slate-300'
-              }`}
+                }`}
             >
               Sign Up
             </motion.button>
@@ -187,11 +231,10 @@ export default function LoginPage() {
                   setSelectedRole('faculty')
                   setError('')
                 }}
-                className={`py-2 rounded-lg font-medium transition-all border ${
-                  selectedRole === 'faculty'
+                className={`py-2 rounded-lg font-medium transition-all border ${selectedRole === 'faculty'
                     ? 'bg-amber-500/20 text-amber-200 border-amber-400/40'
                     : 'text-slate-400 border-white/10 hover:text-slate-300'
-                }`}
+                  }`}
               >
                 Faculty
               </motion.button>
@@ -203,11 +246,10 @@ export default function LoginPage() {
                   setSelectedRole('student')
                   setError('')
                 }}
-                className={`py-2 rounded-lg font-medium transition-all border ${
-                  selectedRole === 'student'
+                className={`py-2 rounded-lg font-medium transition-all border ${selectedRole === 'student'
                     ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/40'
                     : 'text-slate-400 border-white/10 hover:text-slate-300'
-                }`}
+                  }`}
               >
                 Student
               </motion.button>
@@ -378,13 +420,13 @@ export default function LoginPage() {
             {!isSignUp && (
               <div className="flex items-center justify-between text-sm">
                 <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      id="remember-me"
-                      name="remember"
-                      type="checkbox"
-                      className="rounded bg-slate-800 border-white/10 text-blue-500 focus:ring-blue-500"
-                    />
-                    <span className="text-slate-400">Remember me</span>
+                  <input
+                    id="remember-me"
+                    name="remember"
+                    type="checkbox"
+                    className="rounded bg-slate-800 border-white/10 text-blue-500 focus:ring-blue-500"
+                  />
+                  <span className="text-slate-400">Remember me</span>
                 </label>
                 <a
                   href="#"
@@ -434,6 +476,7 @@ export default function LoginPage() {
               <div className="space-y-1 text-xs text-slate-300">
                 <p>Faculty: <span className="font-mono text-amber-300">faculty@demo.com / any 6+ char password</span></p>
                 <p>Student: <span className="font-mono text-cyan-300">STU001 + student@demo.com / any 6+ char password</span></p>
+                <p className="text-[11px] text-slate-500">Demo accounts are created automatically on first successful demo login attempt.</p>
               </div>
             </motion.div>
           )}

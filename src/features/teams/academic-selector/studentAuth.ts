@@ -26,8 +26,10 @@ export const registerStudentAccount = async (
   studentId: string,
   email: string,
   password: string,
-): Promise<void> => {
+): Promise<'created' | 'exists'> => {
   const apiKey = import.meta.env.VITE_FIREBASE_API_KEY
+  if (!apiKey) throw new Error('Firebase API key is missing')
+
   try {
     const res = await fetch(
       `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${apiKey}`,
@@ -39,20 +41,20 @@ export const registerStudentAccount = async (
     )
     const data = await res.json()
 
-    if (data.error) {
+    if (data.error?.message === 'EMAIL_EXISTS') return 'exists'
+    if (!res.ok || data.error) {
       // EMAIL_EXISTS is expected on re-upload — skip silently
       if (data.error.message !== 'EMAIL_EXISTS') {
         console.warn(`[registerStudentAccount] ${email}:`, data.error.message)
       }
-      return
+      throw new Error(data.error?.message || `Account creation failed (${res.status})`)
     }
 
     // data.localId is the Firebase UID
-    if (data.localId) {
-      await saveUserProfile(data.localId, { name, email, role: 'student', studentId })
-    }
+    if (!data.localId) throw new Error('Firebase did not return a user ID')
+    await saveUserProfile(data.localId, { name, email, role: 'student', studentId })
+    return 'created'
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[registerStudentAccount] ${email}:`, msg)
+    throw err instanceof Error ? err : new Error(String(err))
   }
 }

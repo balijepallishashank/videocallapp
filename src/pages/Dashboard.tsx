@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy, Suspense } from 'react'
+import { useCallback, useEffect, useState, lazy, Suspense } from 'react'
 import { useAuth, type UserRole } from '../context/AuthContext'
 
 import Toast from '../components/ui/Toast'
@@ -260,10 +260,10 @@ const initialAcademicRoot: AcademicFacultyRoot = {
   ],
 }
 
-import { 
-  getAcademicStructure, 
-  saveAcademicStructure, 
-  subscribeToMeetings, 
+import {
+  getAcademicStructure,
+  saveAcademicStructure,
+  subscribeToMeetings,
   saveMeetingRecord,
   createStudentRequest,
   startLiveMeeting,
@@ -275,7 +275,7 @@ import {
 export default function Dashboard() {
   const [academicRoot, setAcademicRoot] = useState<AcademicFacultyRoot>(initialAcademicRoot)
 
-  const handleAcademicRootChange = async (updatedDepts: AcademicDepartment[]) => {
+  const handleAcademicRootChange = useCallback(async (updatedDepts: AcademicDepartment[]) => {
     setAcademicRoot((prev) => ({ ...prev, departments: updatedDepts }))
     try {
       await saveAcademicStructure(updatedDepts)
@@ -283,7 +283,7 @@ export default function Dashboard() {
       console.error("Failed to save academic structure", err)
       // Assuming addToast is in scope below, but it's defined later. We'll just log for now.
     }
-  }
+  }, [])
 
   // ==================== AUTHENTICATION ====================
   const { isAuthenticated, currentUser, logout } = useAuth()
@@ -363,7 +363,7 @@ export default function Dashboard() {
     },
   ])
   const [showNotificationPanel, setShowNotificationPanel] = useState(false)
-  
+
   const [showStudentSelection, setShowStudentSelection] = useState(false)
   const [selectedSection, setSelectedSection] = useState<AcademicSection | null>(null)
   const [postMeetingRecord, setPostMeetingRecord] = useState<MeetingRecord | null>(null)
@@ -390,7 +390,7 @@ export default function Dashboard() {
   // Subscribe to live invites from Firestore for students
   useEffect(() => {
     if (currentUser?.role !== 'student') return;
-    
+
     const unsubscribe = subscribeToLiveMeetings((meetings) => {
       // Find if there's any meeting where this student is invited
       const invite = meetings.find(m => m.invitedStudents.includes(currentUser.studentId || currentUser.id));
@@ -440,7 +440,7 @@ export default function Dashboard() {
       addToast('Only faculty can start meetings for a section.', 'warning')
       return
     }
-    
+
     // Show student selection modal
     setSelectedSection(section)
     setShowStudentSelection(true)
@@ -453,7 +453,7 @@ export default function Dashboard() {
       acc[student.id] = false
       return acc
     }, {})
-    
+
     setCurrentMeeting({
       id: meetingId,
       title: meetingTitle,
@@ -462,10 +462,10 @@ export default function Dashboard() {
       startedAt: new Date(),
       attendanceMap,
     })
-    
+
     setShowStudentSelection(false)
     setSelectedSection(null)
-    
+
     addToast(`Meeting started with ${selectedStudents.length} students from ${section.name}`, 'success')
     addActivityNotification('Meeting Started', `${meetingTitle} with ${selectedStudents.length} students.`)
 
@@ -540,10 +540,10 @@ export default function Dashboard() {
       setShareOptions({ includeRecording: true, includeSummary: true })
       addToast(`Meeting "${currentMeeting.title}" has ended.`, 'info')
       addActivityNotification('Meeting Ended', `${currentMeeting.title} ended (${durationMinutes} min).`)
-      
+
       // Delete the live meeting from Firestore
       endLiveMeeting(currentMeeting.id).catch(err => console.error("Failed to end live meeting broadcast:", err));
-      
+
       setCurrentMeeting(null)
       setSelectedNav('recordings')
     }
@@ -552,7 +552,7 @@ export default function Dashboard() {
   const handleJoinLiveInvite = (meetingId: string) => {
     const invite = liveMeetingInvite && liveMeetingInvite.id === meetingId ? liveMeetingInvite : null
     if (!invite) return
-    
+
     // Auto-construct a fake section and student list for the meeting room
     // In a real app we'd fetch this from Firestore, but for now we just drop them in.
     const mockSection: AcademicSection = {
@@ -569,7 +569,7 @@ export default function Dashboard() {
       startedAt: invite.startedAt,
       attendanceMap: {},
     })
-    
+
     addToast('Joined live class', 'success')
   }
 
@@ -681,20 +681,20 @@ export default function Dashboard() {
     return (
       <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading meeting…</div>}>
         <MeetingRoom
-        meetingId={currentMeeting.id}
-        meetingTitle={currentMeeting.title}
-        participants={[]}
-        selectedStudents={currentMeeting.selectedStudents}
-        currentUser={{
-          id: currentUser!.id,
-          name: currentUser!.name,
-          email: currentUser!.email,
-          role: currentUser!.role,
-        }}
-        attendanceMap={currentMeeting.attendanceMap}
-        onToggleAttendance={handleToggleAttendance}
-        onEndMeeting={handleEndMeeting}
-        onInviteParticipants={() => addToast('Invite panel opened', 'info')}
+          meetingId={currentMeeting.id}
+          meetingTitle={currentMeeting.title}
+          participants={[]}
+          selectedStudents={currentMeeting.selectedStudents}
+          currentUser={{
+            id: currentUser!.id,
+            name: currentUser!.name,
+            email: currentUser!.email,
+            role: currentUser!.role,
+          }}
+          attendanceMap={currentMeeting.attendanceMap}
+          onToggleAttendance={handleToggleAttendance}
+          onEndMeeting={handleEndMeeting}
+          onInviteParticipants={() => addToast('Invite panel opened', 'info')}
         />
       </Suspense>
     )
@@ -864,52 +864,52 @@ export default function Dashboard() {
           <div className="max-w-7xl mx-auto">
             {selectedNav === 'dashboard' && (
               <Suspense fallback={<div className="p-6">Loading dashboard…</div>}>
-                <FacultyStudentDashboard 
-                role={currentUser?.role === 'faculty' ? 'faculty' : 'student'} 
-                onQuickStartMeeting={handleQuickStartMeeting}
-                onNavigate={(nav) => setSelectedNav(nav as AcademicNavItem)}
-                upcomingMeetings={studentUpcomingMeetings.map((meeting) => ({
-                  id: meeting.id,
-                  title: meeting.title,
-                  date: meeting.date,
-                }))}
-                attendanceHistory={studentAttendanceHistory.map(({ meeting, status }) => ({
-                  id: meeting.id,
-                  title: meeting.title,
-                  date: meeting.date,
-                  status,
-                }))}
-                notifications={activityNotifications.map((notification) => ({
-                  id: notification.id,
-                  title: notification.title,
-                  message: notification.message,
-                }))}
-                sharedResources={studentSharedResources.map((meeting) => ({
-                  id: meeting.id,
-                  title: meeting.title,
-                  date: meeting.date,
-                  hasRecording: Boolean(meeting.recording),
-                  hasSummary: Boolean(meeting.summary || meeting.keyPoints?.length),
-                  subject: getResourceSubject(meeting.title),
-                  recordingUrl: meeting.recording || undefined,
-                  downloadUrl: meeting.recording || undefined,
-                  fileSizeLabel: meeting.recording ? 'MP4' : undefined,
-                  slidesUrl: typeof meeting.summary === 'string' && meeting.summary.startsWith('http') ? meeting.summary : undefined,
-                  summaryText: meeting.summary || (meeting.keyPoints ? meeting.keyPoints.join(' · ') : undefined),
-                  summaryUrl: typeof meeting.summary === 'string' && meeting.summary.startsWith('http') ? meeting.summary : undefined,
-                }))}
-                liveInvite={liveMeetingInvite || undefined}
-                onJoinLiveMeeting={handleJoinLiveInvite}
-                doubtRequests={studentDoubtRequests.map((request) => ({
-                  id: request.id,
-                  topic: request.topic,
-                  preferredSlot: request.preferredSlot,
-                  requestedBy: request.requestedBy,
-                  status: request.status,
-                  requestedAtLabel: request.createdAt.toLocaleString(),
-                }))}
-                onUpdateDoubtRequestStatus={handleUpdateDoubtRequestStatus}
-                onRequestDoubtSession={handleRequestDoubtSession}
+                <FacultyStudentDashboard
+                  role={currentUser?.role === 'faculty' ? 'faculty' : 'student'}
+                  onQuickStartMeeting={handleQuickStartMeeting}
+                  onNavigate={(nav) => setSelectedNav(nav as AcademicNavItem)}
+                  upcomingMeetings={studentUpcomingMeetings.map((meeting) => ({
+                    id: meeting.id,
+                    title: meeting.title,
+                    date: meeting.date,
+                  }))}
+                  attendanceHistory={studentAttendanceHistory.map(({ meeting, status }) => ({
+                    id: meeting.id,
+                    title: meeting.title,
+                    date: meeting.date,
+                    status,
+                  }))}
+                  notifications={activityNotifications.map((notification) => ({
+                    id: notification.id,
+                    title: notification.title,
+                    message: notification.message,
+                  }))}
+                  sharedResources={studentSharedResources.map((meeting) => ({
+                    id: meeting.id,
+                    title: meeting.title,
+                    date: meeting.date,
+                    hasRecording: Boolean(meeting.recording),
+                    hasSummary: Boolean(meeting.summary || meeting.keyPoints?.length),
+                    subject: getResourceSubject(meeting.title),
+                    recordingUrl: meeting.recording || undefined,
+                    downloadUrl: meeting.recording || undefined,
+                    fileSizeLabel: meeting.recording ? 'MP4' : undefined,
+                    slidesUrl: typeof meeting.summary === 'string' && meeting.summary.startsWith('http') ? meeting.summary : undefined,
+                    summaryText: meeting.summary || (meeting.keyPoints ? meeting.keyPoints.join(' · ') : undefined),
+                    summaryUrl: typeof meeting.summary === 'string' && meeting.summary.startsWith('http') ? meeting.summary : undefined,
+                  }))}
+                  liveInvite={liveMeetingInvite || undefined}
+                  onJoinLiveMeeting={handleJoinLiveInvite}
+                  doubtRequests={studentDoubtRequests.map((request) => ({
+                    id: request.id,
+                    topic: request.topic,
+                    preferredSlot: request.preferredSlot,
+                    requestedBy: request.requestedBy,
+                    status: request.status,
+                    requestedAtLabel: request.createdAt.toLocaleString(),
+                  }))}
+                  onUpdateDoubtRequestStatus={handleUpdateDoubtRequestStatus}
+                  onRequestDoubtSession={handleRequestDoubtSession}
                 />
               </Suspense>
             )}
@@ -917,43 +917,43 @@ export default function Dashboard() {
             {selectedNav === 'academic-structure' && currentUser?.role === 'faculty' && (
               <Suspense fallback={<div className="p-6">Loading structure…</div>}>
                 <AcademicStructure
-                facultyRoot={academicRoot}
-                facultyProfile={currentUser?.facultyProfile as import('../features/teams/AcademicStructure').FacultyProfile | undefined}
-                role={currentUser?.role === 'faculty' ? 'faculty' : 'student'}
-                studentUpcomingMeetings={studentUpcomingMeetings.map((meeting) => ({
-                  id: meeting.id,
-                  title: meeting.title,
-                  date: meeting.date,
-                }))}
-                studentAttendanceHistory={studentAttendanceHistory.map(({ meeting, status }) => ({
-                  id: meeting.id,
-                  title: meeting.title,
-                  date: meeting.date,
-                  status,
-                }))}
-                studentNotifications={activityNotifications.map((notification) => ({
-                  id: notification.id,
-                  title: notification.title,
-                  message: notification.message,
-                }))}
-                studentSharedResources={studentSharedResources.map((meeting) => ({
-                  id: meeting.id,
-                  title: meeting.title,
-                  date: meeting.date,
-                  recording: meeting.recording,
-                  summary: meeting.summary,
-                }))}
-                onOpenRecording={handlePlayRecording}
-                onDownloadResourceSummary={(meetingId) => {
-                  const meeting = meetingHistory.find((item) => item.id === meetingId)
-                  if (!meeting) return
-                  handleDownloadSummary(meeting)
-                }}
-                onStartMeetingForSection={handleStartMeetingForSection}
-                onInviteStudentToMeeting={(student: StudentRecord) => addToast(`Invited ${student.name} to a meeting.`, 'success')}
-                onSendMessageToStudent={(student: StudentRecord) => addToast(`Message sent to ${student.name}.`, 'success')}
-                onViewStudentProfile={(student: StudentRecord) => addToast(`Viewing profile: ${student.name} (${student.id})`, 'info')}
-                onAcademicRootChange={handleAcademicRootChange}
+                  facultyRoot={academicRoot}
+                  facultyProfile={currentUser?.facultyProfile as import('../features/teams/AcademicStructure').FacultyProfile | undefined}
+                  role={currentUser?.role === 'faculty' ? 'faculty' : 'student'}
+                  studentUpcomingMeetings={studentUpcomingMeetings.map((meeting) => ({
+                    id: meeting.id,
+                    title: meeting.title,
+                    date: meeting.date,
+                  }))}
+                  studentAttendanceHistory={studentAttendanceHistory.map(({ meeting, status }) => ({
+                    id: meeting.id,
+                    title: meeting.title,
+                    date: meeting.date,
+                    status,
+                  }))}
+                  studentNotifications={activityNotifications.map((notification) => ({
+                    id: notification.id,
+                    title: notification.title,
+                    message: notification.message,
+                  }))}
+                  studentSharedResources={studentSharedResources.map((meeting) => ({
+                    id: meeting.id,
+                    title: meeting.title,
+                    date: meeting.date,
+                    recording: meeting.recording,
+                    summary: meeting.summary,
+                  }))}
+                  onOpenRecording={handlePlayRecording}
+                  onDownloadResourceSummary={(meetingId) => {
+                    const meeting = meetingHistory.find((item) => item.id === meetingId)
+                    if (!meeting) return
+                    handleDownloadSummary(meeting)
+                  }}
+                  onStartMeetingForSection={handleStartMeetingForSection}
+                  onInviteStudentToMeeting={(student: StudentRecord) => addToast(`Invited ${student.name} to a meeting.`, 'success')}
+                  onSendMessageToStudent={(student: StudentRecord) => addToast(`Message sent to ${student.name}.`, 'success')}
+                  onViewStudentProfile={(student: StudentRecord) => addToast(`Viewing profile: ${student.name} (${student.id})`, 'info')}
+                  onAcademicRootChange={handleAcademicRootChange}
                 />
               </Suspense>
             )}
@@ -966,11 +966,11 @@ export default function Dashboard() {
                     <>
                       <Suspense fallback={<div className="p-4">Loading calendar…</div>}>
                         <CalendarIntegration
-                        meetings={scheduledMeetings}
-                        onSchedule={handleScheduleMeeting}
-                        onEdit={() => {}}
-                        onDelete={handleDeleteScheduledMeeting}
-                        onToast={addToast}
+                          meetings={scheduledMeetings}
+                          onSchedule={handleScheduleMeeting}
+                          onEdit={() => { }}
+                          onDelete={handleDeleteScheduledMeeting}
+                          onToast={addToast}
                         />
                       </Suspense>
                     </>
@@ -984,7 +984,7 @@ export default function Dashboard() {
                           Navigate to the Academic Structure to view your sections, manage students, and launch an interactive meeting.
                         </p>
                       </div>
-                      <button 
+                      <button
                         onClick={() => setSelectedNav('academic-structure')}
                         className="px-5 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors font-medium text-sm whitespace-nowrap ml-4"
                       >
@@ -992,7 +992,7 @@ export default function Dashboard() {
                       </button>
                     </div>
                   )}
-                  
+
                   <div className="bg-slate-800/50 rounded-lg p-4 border border-white/10 mt-2">
                     <div className="flex items-center justify-between gap-3 mb-3">
                       <div>
