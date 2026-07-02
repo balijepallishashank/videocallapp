@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion'
-import { Pin, PinOff, MicOff, Mic, Video, VideoOff, Shield, Wifi } from 'lucide-react'
+import { Pin, PinOff, MicOff, Mic, VideoOff, Shield, Wifi } from 'lucide-react'
 import { useLayoutStore } from './MeetingLayoutManager'
 import { LocalVideoPlayer } from './VideoGrid'
 

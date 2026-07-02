@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Pen, Eraser, Download, Trash2, Undo, Redo, Type, MousePointer2, ArrowLeft, Circle, Square as SquareIcon, Minus } from 'lucide-react'
-import { sendSyncMessage, registerSyncListener } from '../services/syncChannel'
+import { sendSyncMessage, registerSyncListener } from '../../services/syncChannel'
 
 interface WhiteboardProps {
   onToast: (message: string, type: 'info' | 'success' | 'warning' | 'error') => void
@@ -54,7 +54,7 @@ export default function Whiteboard({ onToast, onClose }: WhiteboardProps) {
   }, [])
 
   useEffect(() => {
-    const cleanup = registerSyncListener((type, payload) => {
+    const cleanup = registerSyncListener((type: string, payload: any) => {
       if (type === 'WHITEBOARD_DRAW') {
         const canvas = canvasRef.current
         const ctx = canvas?.getContext('2d')
