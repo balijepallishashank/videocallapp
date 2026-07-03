@@ -24,13 +24,11 @@ export default function LoginPage() {
 
   const [studentName, setStudentName] = useState('')
   const [studentId, setStudentId] = useState('')
-  const [studentProfilePhoto, setStudentProfilePhoto] = useState('')
 
   const [facultyName, setFacultyName] = useState('')
   const [facultyEmployeeId, setFacultyEmployeeId] = useState('')
   const [facultyDesignation, setFacultyDesignation] = useState('')
   const [facultySubjects, setFacultySubjects] = useState('')
-  const [facultyProfilePhoto, setFacultyProfilePhoto] = useState('')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -61,7 +59,7 @@ export default function LoginPage() {
 
           const profile = await register(normalizedEmail, password, 'student', studentName.trim(), {
             studentId: studentId.trim() || undefined,
-            profilePhoto: studentProfilePhoto.trim() || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(studentName.trim())}`,
+            profilePhoto: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(studentName.trim())}`,
           })
 
           if (pendingJoinCode) {
@@ -84,7 +82,7 @@ export default function LoginPage() {
           employeeId: facultyEmployeeId.trim(),
           designation: facultyDesignation.trim(),
           subjects: subjectList,
-          profilePhoto: facultyProfilePhoto.trim() || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(facultyName.trim())}`,
+          profilePhoto: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(facultyName.trim())}`,
         })
 
         navigate('/faculty/dashboard')
@@ -208,172 +206,77 @@ export default function LoginPage() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {isSignUp ? (
-              selectedRole === 'student' ? (
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs text-slate-400 font-medium mb-1">Full Name</label>
-                    <div className="relative">
-                      <User className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
-                      <input
-                        type="text"
-                        value={studentName}
-                        onChange={(e) => setStudentName(e.target.value)}
-                        placeholder="John Doe"
-                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-400 font-medium mb-1">Student Registration ID</label>
-                    <div className="relative">
-                      <GraduationCap className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
-                      <input
-                        type="text"
-                        value={studentId}
-                        onChange={(e) => setStudentId(e.target.value)}
-                        placeholder="e.g. STU12345"
-                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-400 font-medium mb-1">Profile Photo URL</label>
-                    <input
-                      type="url"
-                      value={studentProfilePhoto}
-                      onChange={(e) => setStudentProfilePhoto(e.target.value)}
-                      placeholder="https://..."
-                      className="w-full px-3 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all"
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs text-slate-400 font-medium mb-1">Full Name</label>
-                    <div className="relative">
-                      <User className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
-                      <input
-                        type="text"
-                        value={facultyName}
-                        onChange={(e) => setFacultyName(e.target.value)}
-                        placeholder="Prof. Jane Smith"
-                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-400 font-medium mb-1">Faculty Employee ID</label>
-                    <div className="relative">
-                      <GraduationCap className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
-                      <input
-                        type="text"
-                        value={facultyEmployeeId}
-                        onChange={(e) => setFacultyEmployeeId(e.target.value)}
-                        placeholder="FAC123"
-                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-400 font-medium mb-1">Designation</label>
-                    <input
-                      type="text"
-                      value={facultyDesignation}
-                      onChange={(e) => setFacultyDesignation(e.target.value)}
-                      placeholder="Assistant Professor"
-                      className="w-full px-3 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-400 font-medium mb-1">Subjects Taught (comma separated)</label>
-                    <input
-                      type="text"
-                      value={facultySubjects}
-                      onChange={(e) => setFacultySubjects(e.target.value)}
-                      placeholder="Data Structures, DBMS"
-                      className="w-full px-3 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-400 font-medium mb-1">Profile Photo URL</label>
-                    <input
-                      type="url"
-                      value={facultyProfilePhoto}
-                      onChange={(e) => setFacultyProfilePhoto(e.target.value)}
-                      placeholder="https://..."
-                      className="w-full px-3 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all"
-                    />
-                  </div>
-                </div>
-              )
-            ) : (
+            <div>
+              <label className="block text-xs text-slate-400 font-medium mb-1">Email Address</label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 font-medium mb-1">Password</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                <input type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" className="w-full pl-10 pr-12 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all" />
+                <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-3 top-3 text-slate-500 hover:text-slate-300">
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+            {isSignUp && selectedRole === 'student' && (
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs text-slate-400 font-medium mb-1">Email Address</label>
+                  <label className="block text-xs text-slate-400 font-medium mb-1">Full Name</label>
                   <div className="relative">
-                    <Mail className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="you@example.com"
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all"
-                    />
+                    <User className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                    <input type="text" value={studentName} onChange={(e) => setStudentName(e.target.value)} placeholder="John Doe" className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all" />
                   </div>
                 </div>
-
                 <div>
-                  <label className="block text-xs text-slate-400 font-medium mb-1">Password</label>
+                  <label className="block text-xs text-slate-400 font-medium mb-1">Student Registration ID</label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full pl-10 pr-12 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword((value) => !value)}
-                      className="absolute right-3 top-3 text-slate-500 hover:text-slate-300"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
+                    <GraduationCap className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                    <input type="text" value={studentId} onChange={(e) => setStudentId(e.target.value)} placeholder="e.g. STU12345" className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all" />
                   </div>
                 </div>
               </div>
             )}
-
+            {isSignUp && selectedRole === 'faculty' && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs text-slate-400 font-medium mb-1">Full Name</label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                    <input type="text" value={facultyName} onChange={(e) => setFacultyName(e.target.value)} placeholder="Prof. Jane Smith" className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 font-medium mb-1">Faculty Employee ID</label>
+                  <div className="relative">
+                    <GraduationCap className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                    <input type="text" value={facultyEmployeeId} onChange={(e) => setFacultyEmployeeId(e.target.value)} placeholder="FAC123" className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 font-medium mb-1">Designation</label>
+                  <input type="text" value={facultyDesignation} onChange={(e) => setFacultyDesignation(e.target.value)} placeholder="Assistant Professor" className="w-full px-3 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 font-medium mb-1">Subjects Taught (comma separated)</label>
+                  <input type="text" value={facultySubjects} onChange={(e) => setFacultySubjects(e.target.value)} placeholder="Data Structures, DBMS" className="w-full px-3 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all" />
+                </div>
+              </div>
+            )}
             {isSignUp && (
               <div>
                 <label className="block text-xs text-slate-400 font-medium mb-1">Confirm Password</label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Re-enter password"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all"
-                  />
+                  <input type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Re-enter password" className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all" />
                 </div>
               </div>
             )}
-
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-cyan-600 to-fuchsia-600 hover:from-cyan-500 hover:to-fuchsia-500 text-white font-bold text-sm transition-all shadow-lg shadow-cyan-500/20 disabled:opacity-50"
-            >
+            <button type="submit" disabled={isLoading} className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-cyan-600 to-fuchsia-600 hover:from-cyan-500 hover:to-fuchsia-500 text-white font-bold text-sm transition-all shadow-lg shadow-cyan-500/20 disabled:opacity-50">
               {isLoading ? 'Please wait...' : isSignUp ? 'Create Account' : 'Sign In'}
             </button>
           </form>

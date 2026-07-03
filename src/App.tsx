@@ -98,6 +98,7 @@ export default function App() {
         <Route path="meetings" element={<FacultyMeetingsView />} />
         <Route path="scheduled-meetings" element={<ScheduledMeetingsView />} />
         <Route path="analytics" element={<AnalyticsView />} />
+        <Route path="profile" element={<ProfileView />} />
         <Route path="settings" element={<SettingsPageWrapper />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Route>

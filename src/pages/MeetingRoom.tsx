@@ -90,6 +90,13 @@ export default function MeetingRoom({
   // Agora tracks
   const [agoraVideoTrack, setAgoraVideoTrack] = useState<ICameraVideoTrack | null>(null)
   const [agoraAudioTrack, setAgoraAudioTrack] = useState<IMicrophoneAudioTrack | null>(null)
+  const agoraVideoTrackRef = useRef<ICameraVideoTrack | null>(null)
+  const agoraAudioTrackRef = useRef<IMicrophoneAudioTrack | null>(null)
+
+  // Sync refs with state so the cleanup function can access the latest tracks without being re-triggered
+  useEffect(() => { agoraVideoTrackRef.current = agoraVideoTrack }, [agoraVideoTrack])
+  useEffect(() => { agoraAudioTrackRef.current = agoraAudioTrack }, [agoraAudioTrack])
+
   const [remoteParticipants, setRemoteParticipants] = useState<RemoteParticipant[]>([])
   const agoraJoined = useRef(false)
 
@@ -268,10 +275,10 @@ export default function MeetingRoom({
     })
 
     return () => {
-      leaveChannel(agoraVideoTrack, agoraAudioTrack)
+      leaveChannel(agoraVideoTrackRef.current, agoraAudioTrackRef.current)
       agoraJoined.current = false
     }
-  }, [agoraVideoTrack, agoraAudioTrack, meetingId, currentUser.id])
+  }, [meetingId, currentUser.id])
 
   // Meeting duration timer
   useEffect(() => {
@@ -612,7 +619,7 @@ export default function MeetingRoom({
   }
 
   const handleCopyInviteLink = () => {
-    const text = `Join Meeting: ${meetingTitle}\nLink: http://localhost:5173/student/join-meeting\nCode: ${meetingId}`
+    const text = `Join Meeting: ${meetingTitle}\nLink: ${window.location.origin}/student/join-meeting\nCode: ${meetingId}`
     navigator.clipboard.writeText(text).then(() => {
       addToast('Invitation details copied to clipboard', 'success')
     }).catch(() => {

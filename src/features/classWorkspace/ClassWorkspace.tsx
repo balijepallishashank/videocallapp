@@ -8,6 +8,7 @@ import {
   ClipboardList,
   Copy,
   Download,
+  Eye,
   FileText,
   LayoutDashboard,
   Link as LinkIcon,
@@ -17,6 +18,7 @@ import {
   Trash2,
   Users,
   Video,
+  Loader2,
 } from 'lucide-react'
 import { db } from '../../config/firebase'
 import { useAuth } from '../../context/AuthContext'
@@ -36,6 +38,7 @@ import {
   subscribeToMeetingSummaries,
   updateClass,
   uploadClassMaterial,
+  deleteClassMaterial,
   type LiveMeetingInvite,
   type MeetingAttendance,
   type MeetingSummary,
@@ -96,8 +99,9 @@ export default function ClassWorkspace() {
   const [liveMeeting, setLiveMeeting] = useState<LiveMeetingInvite | null>(null)
   const [scheduleForm, setScheduleForm] = useState(emptyMeetingForm)
   const [materialTitle, setMaterialTitle] = useState('')
-  const [materialFileName, setMaterialFileName] = useState('')
+  const [materialFile, setMaterialFile] = useState<File | null>(null)
   const [materialFileUrl, setMaterialFileUrl] = useState('')
+  const [isUploadingMaterial, setIsUploadingMaterial] = useState(false)
   const [editClassName, setEditClassName] = useState('')
   const [editSubject, setEditSubject] = useState('')
   const [editDescription, setEditDescription] = useState('')
@@ -176,8 +180,9 @@ export default function ClassWorkspace() {
   const meetingCount = meetings.length + scheduledMeetings.length
 
   const copyInvite = async () => {
-    if (!classRecord?.inviteLink) return
-    await navigator.clipboard.writeText(classRecord.inviteLink)
+    if (!classRecord?.classCode) return
+    const link = `${window.location.origin}/join/${classRecord.classCode}`
+    await navigator.clipboard.writeText(link)
     setCopied(true)
     addToast('Invite link copied to clipboard.', 'info')
     window.setTimeout(() => setCopied(false), 1800)
@@ -186,36 +191,41 @@ export default function ClassWorkspace() {
   const startClassSession = async () => {
     if (!classId || !classRecord) return
 
-    const channelName = classId
-    await startLiveMeeting(channelName, {
-      id: channelName,
-      title: `${classRecord.subject} Live Session`,
-      sectionName: classRecord.name,
-      host: currentUser?.name || 'Faculty',
-      invitedStudents: members.map((member) => member.id),
-      classId,
-      facultyId: currentUser?.id,
-      subject: classRecord.subject,
-    })
+    try {
+      const channelName = classId
+      await startLiveMeeting(channelName, {
+        id: channelName,
+        title: `${classRecord.subject} Live Session`,
+        sectionName: classRecord.name,
+        host: currentUser?.name || 'Faculty',
+        invitedStudents: members.map((member) => member.id),
+        classId,
+        facultyId: currentUser?.id,
+        subject: classRecord.subject,
+      })
 
-    const membersSnap = await getDocs(query(collection(db, 'class_members'), where('classId', '==', classId)))
-    await Promise.all(
-      membersSnap.docs.map((memberDoc) => {
-        const member = memberDoc.data()
-        return createNotification({
-          userId: member.studentId,
-          title: `${classRecord.name} is live`,
-          description: `${currentUser?.name || 'Faculty'} started ${classRecord.subject}. Join now with ${classRecord.classCode || 'your class code'}.`,
-          type: 'info',
-          priority: 'high',
-          classId,
-          meetingId: channelName,
-        })
-      }),
-    )
+      const membersSnap = await getDocs(query(collection(db, 'class_members'), where('classId', '==', classId)))
+      await Promise.all(
+        membersSnap.docs.map((memberDoc) => {
+          const member = memberDoc.data()
+          return createNotification({
+            userId: member.studentId,
+            title: `${classRecord.name} is live`,
+            description: `${currentUser?.name || 'Faculty'} started ${classRecord.subject}. Join now with ${classRecord.classCode || 'your class code'}.`,
+            type: 'info',
+            priority: 'high',
+            classId,
+            meetingId: channelName,
+          })
+        }),
+      )
 
-    addToast('Live class session started.', 'success')
-    setInCall(true)
+      addToast('Live class session started.', 'success')
+      setInCall(true)
+    } catch (error: any) {
+      console.error('Failed to start live session:', error)
+      addToast(`Failed to start session: ${error.message}`, 'error')
+    }
   }
 
   const endClassSession = async () => {
@@ -260,24 +270,36 @@ export default function ClassWorkspace() {
 
   const handleUploadMaterial = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!classId || !materialTitle.trim() || !materialFileName.trim()) {
-      addToast('Add a title and file name for the material.', 'warning')
+    if (!classId || !materialTitle.trim() || (!materialFile && !materialFileUrl.trim())) {
+      addToast('Add a title and either select a file or provide a link.', 'warning')
       return
     }
 
-    await uploadClassMaterial(
-      classId,
-      materialTitle.trim(),
-      materialFileName.trim(),
-      materialFileUrl.trim() || '#',
-      'Uploaded in workspace',
-      currentUser?.name || 'Faculty',
-    )
+    if (materialFile && materialFile.size > 5 * 1024 * 1024) {
+      addToast('File must be smaller than 5MB.', 'error')
+      return
+    }
 
-    setMaterialTitle('')
-    setMaterialFileName('')
-    setMaterialFileUrl('')
-    addToast('Material uploaded successfully.', 'success')
+    setIsUploadingMaterial(true)
+    try {
+      await uploadClassMaterial(
+        classId,
+        materialTitle.trim(),
+        materialFile,
+        materialFileUrl.trim(),
+        currentUser?.name || 'Faculty',
+      )
+
+      setMaterialTitle('')
+      setMaterialFile(null)
+      setMaterialFileUrl('')
+      addToast('Material uploaded successfully.', 'success')
+    } catch (err: any) {
+      console.error('Material upload error:', err)
+      addToast('Failed to upload material.', 'error')
+    } finally {
+      setIsUploadingMaterial(false)
+    }
   }
 
   const handleUpdateClass = async (e: React.FormEvent) => {
@@ -395,6 +417,7 @@ export default function ClassWorkspace() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[320px]">
+            {isFaculty && (
               <button
                 type="button"
                 onClick={copyInvite}
@@ -404,12 +427,13 @@ export default function ClassWorkspace() {
                 <LinkIcon className="h-3.5 w-3.5" />
                 Invite link
               </div>
-              <div className="mt-2 text-sm font-semibold text-white break-all">{classRecord.inviteLink || 'Not configured'}</div>
+              <div className="mt-2 text-sm font-semibold text-white break-all">{classRecord.classCode ? `${window.location.origin}/join/${classRecord.classCode}` : 'Not configured'}</div>
                 <div className="mt-2 flex items-center gap-2 text-xs text-cyan-300">
                   <Copy className="h-3.5 w-3.5" />
                   {copied ? 'Copied' : 'Copy class invite'}
                 </div>
             </button>
+            )}
 
             <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
               <div className="text-xs uppercase tracking-wide text-slate-400">Class code</div>
@@ -461,9 +485,9 @@ export default function ClassWorkspace() {
             </>
           )}
 
-          {classRecord.inviteLink && (
+          {isFaculty && classRecord.inviteLink && (
             <a
-              href={`https://api.whatsapp.com/send?text=${encodeURIComponent(`Join my class "${classRecord.name}" on Video Pro using link: ${classRecord.inviteLink} or Class Code: ${classRecord.classCode || ''}`)}`}
+              href={`https://api.whatsapp.com/send?text=${encodeURIComponent(`Join my class "${classRecord.name}" on Video Pro using link: ${window.location.origin}/join/${classRecord.classCode} or Class Code: ${classRecord.classCode || ''}`)}`}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/20"
@@ -725,11 +749,27 @@ export default function ClassWorkspace() {
                     Upload a resource
                   </div>
                   <input value={materialTitle} onChange={(e) => setMaterialTitle(e.target.value)} placeholder="Material title" className="w-full rounded-xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white placeholder-slate-600 focus:outline-none" />
-                  <input value={materialFileName} onChange={(e) => setMaterialFileName(e.target.value)} placeholder="File name" className="w-full rounded-xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white placeholder-slate-600 focus:outline-none" />
-                  <input value={materialFileUrl} onChange={(e) => setMaterialFileUrl(e.target.value)} placeholder="Optional file URL" className="w-full rounded-xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white placeholder-slate-600 focus:outline-none" />
-                  <button className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-bold text-slate-950">
-                    <Plus className="h-4 w-4" />
-                    Upload
+                  
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <input 
+                      type="file" 
+                      onChange={(e) => setMaterialFile(e.target.files?.[0] || null)} 
+                      className="w-full rounded-xl border border-white/10 bg-slate-950/70 px-4 py-2.5 text-sm text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-cyan-500/10 file:text-cyan-400 hover:file:bg-cyan-500/20 focus:outline-none" 
+                    />
+                    <div className="flex items-center justify-center text-slate-500 text-xs font-semibold px-2">OR</div>
+                    <input value={materialFileUrl} onChange={(e) => setMaterialFileUrl(e.target.value)} placeholder="External link (e.g. Google Drive)" className="w-full rounded-xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white placeholder-slate-600 focus:outline-none" />
+                  </div>
+
+                  <button 
+                    disabled={isUploadingMaterial}
+                    className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-bold text-slate-950 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                  >
+                    {isUploadingMaterial ? (
+                       <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                       <Plus className="h-4 w-4" />
+                    )}
+                    {isUploadingMaterial ? 'Uploading...' : 'Upload'}
                   </button>
                 </form>
               )}
@@ -742,16 +782,55 @@ export default function ClassWorkspace() {
                 ) : (
                   materials.map((material) => (
                     <div key={material.id} className="rounded-2xl border border-white/10 bg-slate-900/40 p-4 md:p-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <div className="text-white font-semibold">{material.title}</div>
-                        <div className="mt-1 text-sm text-slate-400">{material.fileName || 'Resource file'}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-white font-semibold truncate">{material.title}</div>
+                        <div className="mt-1 text-sm text-slate-400 truncate">{material.fileName || 'Resource file'}</div>
+                        {material.fileSize && material.fileSize !== 'N/A' && (
+                          <div className="mt-0.5 text-xs text-slate-600">{material.fileSize}</div>
+                        )}
                       </div>
-                      {material.fileUrl ? (
-                        <a href={material.fileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-white">
-                          <Download className="h-4 w-4" />
-                          Open
-                        </a>
-                      ) : null}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {material.fileUrl ? (() => {
+                          const isPdf = material.fileName?.toLowerCase().endsWith('.pdf') || material.fileUrl.toLowerCase().includes('.pdf');
+                          const viewUrl = isPdf
+                            ? `https://docs.google.com/viewer?url=${encodeURIComponent(material.fileUrl)}`
+                            : material.fileUrl;
+                            
+                          const downloadUrl = material.fileUrl.includes('cloudinary.com') 
+                            ? material.fileUrl.replace('/upload/', '/upload/fl_attachment/')
+                            : material.fileUrl;
+
+                          return (
+                            <>
+                              <a href={viewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/20 transition">
+                                <Eye className="h-4 w-4" />
+                                View
+                              </a>
+                              <a href={downloadUrl} download target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/40 px-4 py-2.5 text-sm font-semibold text-slate-300 hover:bg-slate-900 transition">
+                                <Download className="h-4 w-4" />
+                                Download
+                              </a>
+                            </>
+                          );
+                        })() : null}
+                        {isFaculty && (
+                          <button
+                            onClick={async () => {
+                              if (!window.confirm(`Delete "${material.title}"? This cannot be undone.`)) return;
+                              try {
+                                await deleteClassMaterial(material.id);
+                                addToast('Material deleted.', 'info');
+                              } catch {
+                                addToast('Failed to delete material.', 'error');
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 rounded-xl bg-red-500/10 px-3 py-2.5 text-sm font-semibold text-red-400 hover:bg-red-500/20 transition"
+                            title="Delete material"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))
                 )}

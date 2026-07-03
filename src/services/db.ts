@@ -10,9 +10,8 @@ import {
   where,
   getDocs
 } from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 export { db } from '../config/firebase';
-import { db, storage, auth } from '../config/firebase';
+import { db, auth } from '../config/firebase';
 import type { UserProfile } from '../context/AuthContext';
 import type { AcademicBranch, AcademicDepartment, AcademicSection } from '../features/classWorkspace/types';
 import type { MeetingRecord } from '../features/meeting/MeetingHistory';
@@ -707,30 +706,45 @@ export const subscribeToNotifications = (userId: string, callback: (notification
 // FIREBASE STORAGE INTERACTION
 // ========================
 
-export const uploadFileToStorage = (
+export const uploadFileToStorage = async (
   path: string,
   file: File,
   onProgress?: (progress: number) => void
 ): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const storageRef = ref(storage, path);
-    const uploadTask = uploadBytesResumable(storageRef, file);
+  const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+  const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+  
+  if (!cloudName || !uploadPreset) {
+    throw new Error('Cloudinary is not configured.');
+  }
 
-    uploadTask.on(
-      'state_changed',
-      (snapshot) => {
-        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-        if (onProgress) onProgress(progress);
-      },
-      (error) => {
-        reject(error);
-      },
-      async () => {
-        const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-        resolve(downloadUrl);
-      }
-    );
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', uploadPreset);
+
+  // 'raw' = documents (PDF, DOCX, etc.)
+  // 'image' = images
+  // 'video' = video/audio
+  let resourceType = 'raw';
+  if (file.type.startsWith('image/')) resourceType = 'image';
+  else if (file.type.startsWith('video/') || file.type.startsWith('audio/')) resourceType = 'video';
+
+  // Note: onProgress is hard to emulate perfectly with fetch, 
+  // but we can call it at start and end to prevent UI hangs.
+  if (onProgress) onProgress(10);
+
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, {
+    method: 'POST',
+    body: formData,
   });
+
+  if (!res.ok) {
+    throw new Error('Upload failed');
+  }
+
+  const data = await res.json();
+  if (onProgress) onProgress(100);
+  return data.secure_url;
 };
 
 // ========================
@@ -941,7 +955,7 @@ export const createClass = async (details: { name: string; subject: string; desc
   const subjPrefix = details.subject.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase();
   const randomSuffix = Math.floor(1000 + Math.random() * 9000);
   const classCode = `VP-${subjPrefix}-${randomSuffix}`;
-  const inviteLink = `https://videopro.app/join/${classCode}`;
+  const inviteLink = `${window.location.origin}/join/${classCode}`;
 
   const classDocRef = doc(db, 'classes', classId);
   const classPayload = {
@@ -1091,7 +1105,44 @@ export const subscribeToClassMembers = (classId: string, callback: (members: any
   });
 };
 
-export const uploadClassMaterial = async (classId: string, title: string, fileName: string, fileUrl: string, fileSize: string, uploadedBy: string) => {
+export const uploadClassMaterial = async (classId: string, title: string, file: File | null, optionalUrl: string, uploadedBy: string) => {
+  let fileUrl = optionalUrl;
+  let fileName = file ? file.name : (optionalUrl ? 'External Link' : 'Unknown File');
+  let fileSize = file ? `${(file.size / 1024).toFixed(1)} KB` : 'N/A';
+
+  if (file) {
+    const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+    const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+    
+    if (!cloudName || !uploadPreset) {
+      throw new Error('Cloudinary is not configured. Missing cloud name or upload preset.');
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', uploadPreset);
+
+    // 'raw' = documents (PDF, DOCX, etc.)
+    // 'image' = images
+    // 'video' = video/audio
+    let resourceType = 'raw';
+    if (file.type.startsWith('image/')) resourceType = 'image';
+    else if (file.type.startsWith('video/') || file.type.startsWith('audio/')) resourceType = 'video';
+
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const errorData = await res.json();
+      throw new Error(errorData.error?.message || 'Failed to upload to Cloudinary');
+    }
+
+    const data = await res.json();
+    fileUrl = data.secure_url;
+  }
+
   const materialId = `material-${Date.now()}`;
   const docRef = doc(db, 'study_materials', materialId);
   await setDoc(docRef, {
@@ -1103,6 +1154,10 @@ export const uploadClassMaterial = async (classId: string, title: string, fileNa
     uploadedBy,
     uploadedAt: new Date().toISOString()
   });
+};
+
+export const deleteClassMaterial = async (materialId: string): Promise<void> => {
+  await deleteDoc(doc(db, 'study_materials', materialId));
 };
 
 export const verifyClassMembership = async (studentId: string, classId: string): Promise<boolean> => {

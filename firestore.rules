@@ -7,7 +7,7 @@ service cloud.firestore {
     }
 
     function isFaculty() {
-      return isAuthenticated();
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'faculty';
     }
 
     function isClassFaculty(classId) {
@@ -15,17 +15,17 @@ service cloud.firestore {
     }
 
     function isClassMember(classId) {
-      return isAuthenticated() && exists(/databases/$(database)/documents/class_members/$(classId)_$(request.auth.uid));
+      return isAuthenticated() && exists(/databases/$(database)/documents/class_members/$(classId + '_' + request.auth.uid));
     }
 
     match /users/{userId} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isFaculty());
       allow create, update: if request.auth.uid == userId;
     }
 
     match /classes/{classId} {
       allow get: if isAuthenticated() && (resource.data.facultyId == request.auth.uid || isClassMember(classId));
-      allow list: if isAuthenticated() && resource.data.facultyId == request.auth.uid;
+      allow list: if isAuthenticated();
       allow create: if isFaculty() && request.resource.data.facultyId == request.auth.uid;
       allow update, delete: if isFaculty() && resource.data.facultyId == request.auth.uid;
     }
@@ -39,7 +39,12 @@ service cloud.firestore {
 
     match /meetings/{meetingId} {
       allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
-      allow create, update, delete: if isClassFaculty(request.resource.data.classId);
+      allow create, update: if isClassFaculty(request.resource.data.classId);
+      allow delete: if isClassFaculty(resource.data.classId);
+      
+      match /{document=**} {
+        allow read, write: if isAuthenticated();
+      }
     }
 
     match /live_meetings/{meetingId} {
@@ -49,27 +54,32 @@ service cloud.firestore {
 
     match /scheduled_meetings/{meetingId} {
       allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
-      allow create, update, delete: if isClassFaculty(request.resource.data.classId);
+      allow create, update: if isClassFaculty(request.resource.data.classId);
+      allow delete: if isClassFaculty(resource.data.classId);
     }
 
     match /meeting_summaries/{summaryId} {
       allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
-      allow create, update, delete: if isClassFaculty(request.resource.data.classId);
+      allow create, update: if isClassFaculty(request.resource.data.classId);
+      allow delete: if isClassFaculty(resource.data.classId);
     }
 
     match /meeting_attendance/{attendanceId} {
       allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
-      allow create, update, delete: if isClassFaculty(request.resource.data.classId);
+      allow create, update: if isClassFaculty(request.resource.data.classId);
+      allow delete: if isClassFaculty(resource.data.classId);
     }
 
     match /study_materials/{materialId} {
       allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
-      allow create, update, delete: if isClassFaculty(request.resource.data.classId);
+      allow create, update: if isClassFaculty(request.resource.data.classId);
+      allow delete: if isClassFaculty(resource.data.classId);
     }
 
     match /recordings/{recordingId} {
       allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
-      allow create, update, delete: if isClassFaculty(request.resource.data.classId);
+      allow create, update: if isClassFaculty(request.resource.data.classId);
+      allow delete: if isClassFaculty(resource.data.classId);
     }
 
     match /notifications/{notificationId} {

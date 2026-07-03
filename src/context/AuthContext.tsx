@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react'
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react'
 import { auth } from '../config/firebase'
 import {
   onAuthStateChanged,
@@ -48,6 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null)
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const isRegistering = useRef(false)
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -56,6 +57,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!user) {
         setCurrentUser(null)
         setIsLoading(false)
+        return
+      }
+
+      if (isRegistering.current) {
+        // Registration will handle setting the user profile
         return
       }
 
@@ -95,8 +101,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     name: string,
     extraFields: Record<string, unknown>,
   ) => {
-    const cred = await createUserWithEmailAndPassword(auth, email, password)
-    const profile: UserProfile = {
+    isRegistering.current = true;
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, email, password)
+      const profile: UserProfile = {
       id: cred.user.uid,
       email,
       name,
@@ -111,6 +119,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(`profile_${cred.user.uid}`, JSON.stringify(profile))
     setCurrentUser(profile)
     return profile
+    } finally {
+      isRegistering.current = false;
+    }
   }
 
   const logout = async () => {

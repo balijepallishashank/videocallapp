@@ -17,6 +17,25 @@ import AgoraRTC, {
 } from 'agora-rtc-sdk-ng'
 
 export const APP_ID = import.meta.env.VITE_AGORA_APP_ID as string | undefined
+export const APP_CERTIFICATE = import.meta.env.VITE_AGORA_APP_CERTIFICATE as string | undefined
+
+// Helper to generate a temporary token for local testing (only safe if Vite doesn't expose this to the client, but since we are doing this purely client-side for this demo, it's a workaround. In a real production app, this should be fetched from a backend).
+async function generateToken(appId: string, appCertificate: string, channelName: string, uid: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const msg = encoder.encode(appId + channelName + uid);
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(appCertificate),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, msg);
+  // Convert to base64 safely
+  const hashArray = Array.from(new Uint8Array(signature));
+  const hashHex = hashArray.map(b => String.fromCharCode(b)).join('');
+  return btoa(hashHex);
+}
 
 export interface RemoteParticipant {
   uid: UID
@@ -46,8 +65,17 @@ export async function joinChannel(
   }
 
   const agoraClient = getAgoraClient()
-  // token = null uses testing mode (no certificate required)
-  await agoraClient.join(APP_ID, channelName, null, uid)
+  
+  let token: string | null = null;
+  if (APP_ID && APP_CERTIFICATE) {
+    try {
+      token = await generateToken(APP_ID, APP_CERTIFICATE, channelName, uid);
+    } catch (e) {
+      console.warn('[Agora] Failed to generate token, falling back to null', e);
+    }
+  }
+
+  await agoraClient.join(APP_ID, channelName, token, uid)
 
   let localVideoTrack: ICameraVideoTrack | null = null
   let localAudioTrack: IMicrophoneAudioTrack | null = null
