@@ -1,449 +1,384 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Mail, Lock, Eye, EyeOff, Sparkles } from 'lucide-react'
-import IconButton from '../components/ui/IconButton'
+import { Mail, Lock, Eye, EyeOff, Sparkles, User, GraduationCap, BadgeInfo } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { useNavigate } from 'react-router-dom'
+import { joinClassByCode } from '../services/db'
 
 export type UserRole = 'faculty' | 'student'
-
-export interface FacultyRegistrationDetails {
-  facultyName: string
-  facultyDepartment: string
-  facultyEmail: string
-  facultyId: string
-  phoneNumber: string
-  designation: string
-  password?: string
-}
-
 
 export default function LoginPage() {
   const { login, register } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const pendingJoinCode = searchParams.get('join')?.trim().toUpperCase() || ''
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [studentId, setStudentId] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [isSignUp, setIsSignUp] = useState(false)
+  const [selectedRole, setSelectedRole] = useState<UserRole>('student')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
-  const [isSignUp, setIsSignUp] = useState(false)
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [selectedRole, setSelectedRole] = useState<UserRole>('student')
 
-  // Faculty registration fields
+  const [studentName, setStudentName] = useState('')
+  const [studentId, setStudentId] = useState('')
+  const [studentProfilePhoto, setStudentProfilePhoto] = useState('')
+
   const [facultyName, setFacultyName] = useState('')
-  const [facultyDepartment, setFacultyDepartment] = useState('')
-  const [facultyId, setFacultyId] = useState('')
-  const [phoneNumber, setPhoneNumber] = useState('')
-  const [designation, setDesignation] = useState('')
-
+  const [facultyEmployeeId, setFacultyEmployeeId] = useState('')
+  const [facultyDesignation, setFacultyDesignation] = useState('')
+  const [facultySubjects, setFacultySubjects] = useState('')
+  const [facultyProfilePhoto, setFacultyProfilePhoto] = useState('')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
-    // Validation
-    if (selectedRole === 'student' && !studentId.trim()) {
-      setError('Student ID is required')
-      return
-    }
-
-    if (!email.trim()) {
-      setError(selectedRole === 'faculty' ? 'Faculty Email is required' : 'Email is required')
-      return
-    }
-
-    if (!password) {
-      setError('Password is required')
+    if (!email.trim() || !password) {
+      setError('Email and password are required.')
       return
     }
 
     if (password.length < 6) {
-      setError('Password must be at least 6 characters')
+      setError('Password must be at least 6 characters.')
       return
     }
 
     if (isSignUp && password !== confirmPassword) {
-      setError('Passwords do not match')
+      setError('Passwords do not match.')
       return
     }
 
-    if (isSignUp && selectedRole === 'faculty') {
-      if (!facultyName.trim()) return setError('Faculty Name is required')
-      if (!facultyDepartment.trim()) return setError('Faculty Department is required')
-      if (!facultyId.trim()) return setError('Faculty ID is required')
-      if (!phoneNumber.trim()) return setError('Phone Number is required')
-      if (!designation.trim()) return setError('Designation is required')
-    }
-
-    // Simulate API call
     setIsLoading(true)
     try {
       const normalizedEmail = email.trim().toLowerCase()
-      if (isSignUp && selectedRole === 'faculty') {
-        await register(normalizedEmail, password, 'faculty', facultyName, facultyId)
-      } else if (selectedRole === 'faculty') {
-        await login(normalizedEmail, password)
-      } else {
-        await login(normalizedEmail, password)
+
+      if (isSignUp) {
+        if (selectedRole === 'student') {
+          if (!studentName.trim()) throw new Error('Student name is required.')
+
+          const profile = await register(normalizedEmail, password, 'student', studentName.trim(), {
+            studentId: studentId.trim() || undefined,
+            profilePhoto: studentProfilePhoto.trim() || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(studentName.trim())}`,
+          })
+
+          if (pendingJoinCode) {
+            const result = await joinClassByCode(profile.id, profile.name, profile.email, pendingJoinCode)
+            navigate(`/student/class/${result.classId}`)
+            return
+          }
+
+          navigate('/student/dashboard')
+          return
+        }
+
+        if (!facultyName.trim()) throw new Error('Faculty name is required.')
+        if (!facultyEmployeeId.trim()) throw new Error('Faculty employee ID is required.')
+        if (!facultyDesignation.trim()) throw new Error('Designation is required.')
+
+        const subjectList = facultySubjects.split(',').map((subject) => subject.trim()).filter(Boolean)
+
+        await register(normalizedEmail, password, 'faculty', facultyName.trim(), {
+          employeeId: facultyEmployeeId.trim(),
+          designation: facultyDesignation.trim(),
+          subjects: subjectList,
+          profilePhoto: facultyProfilePhoto.trim() || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(facultyName.trim())}`,
+        })
+
+        navigate('/faculty/dashboard')
+        return
       }
-      setIsLoading(false)
+
+      const profile = await login(normalizedEmail, password)
+
+      if (pendingJoinCode && profile.role === 'student') {
+        const result = await joinClassByCode(profile.id, profile.name, profile.email, pendingJoinCode)
+        navigate(`/student/class/${result.classId}`)
+        return
+      }
+
       navigate('/')
-    } catch (err: unknown) {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'An authentication error occurred.'
+      setError(message)
+    } finally {
       setIsLoading(false)
-      setError(err instanceof Error ? err.message : 'An error occurred')
     }
   }
 
   return (
-    <main role="main" aria-label="Login" className="w-full min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-start md:items-center justify-center relative overflow-x-hidden overflow-y-auto p-4 md:py-8">
-      {/* Animated Background */}
-      <div className="absolute inset-0 overflow-hidden">
-        <motion.div
-          animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.5, 0.3] }}
-          transition={{ duration: 8, repeat: Infinity }}
-          className="absolute w-96 h-96 bg-blue-500/30 rounded-full blur-3xl -top-20 -left-20"
-        />
-        <motion.div
-          animate={{ scale: [1.2, 1, 1.2], opacity: [0.3, 0.5, 0.3] }}
-          transition={{ duration: 8, repeat: Infinity, delay: 1 }}
-          className="absolute w-96 h-96 bg-purple-500/30 rounded-full blur-3xl -bottom-20 -right-20"
-        />
+    <main className="min-h-screen w-full overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.22),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(244,114,182,0.18),_transparent_28%),linear-gradient(135deg,_#020617,_#0f172a_52%,_#020617)] flex items-center justify-center p-4 py-10">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
+        <div className="absolute -bottom-24 -right-24 h-80 w-80 rounded-full bg-fuchsia-500/15 blur-3xl" />
       </div>
 
-      {/* Login Container */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6 }}
-        className="relative z-10 w-full max-w-md"
-      >
-        {/* Logo & Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="text-center mb-8"
-        >
-          <div className="inline-flex items-center justify-center gap-2 mb-4">
-            <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-              <Sparkles className="w-6 h-6 text-white" />
+      <div className="relative z-10 w-full max-w-5xl grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+        <section className="rounded-[2rem] border border-white/10 bg-white/5 p-8 md:p-10 backdrop-blur-xl shadow-2xl shadow-slate-950/30">
+          <div className="inline-flex items-center gap-3 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-cyan-100 text-sm font-semibold mb-6">
+            <Sparkles className="h-4 w-4" />
+            Video Pro class workspace
+          </div>
+          <h1 className="text-4xl md:text-5xl font-black tracking-tight text-white leading-tight max-w-xl">
+            A cleaner login flow for the redesigned class hub.
+          </h1>
+          <p className="mt-4 max-w-xl text-slate-300 text-sm md:text-base leading-7">
+            Sign in or create a faculty/student profile without the old branch, year, or section fields. The workspace now keys everything off classes and memberships.
+          </p>
+          <div className="mt-8 grid gap-3 sm:grid-cols-3 text-sm text-slate-300">
+            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+              <p className="font-semibold text-white">Unified access</p>
+              <p className="mt-1 text-slate-400">One entry point for both roles.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+              <p className="font-semibold text-white">Class-first design</p>
+              <p className="mt-1 text-slate-400">No academic hierarchy fields.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+              <p className="font-semibold text-white">Fast navigation</p>
+              <p className="mt-1 text-slate-400">Dashboards open directly to work.</p>
             </div>
           </div>
-          <h1 className="text-4xl font-bold text-white mb-2">VideoCall Pro</h1>
-          <p className="text-slate-400">University video meetings & academic management</p>
-        </motion.div>
+        </section>
 
-        {/* Login Card */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.3, duration: 0.5 }}
-          className="glass rounded-2xl p-8 border border-white/10 shadow-2xl"
+        <motion.section
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: 'easeOut' }}
+          className="rounded-[2rem] border border-white/10 bg-slate-950/75 p-6 md:p-8 shadow-2xl shadow-slate-950/40 backdrop-blur-xl"
         >
-          {/* Tab Selection */}
-          <div className="flex gap-2 mb-8 bg-slate-800/50 p-1 rounded-lg">
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
+          <div className="flex gap-2 mb-6 bg-slate-900/80 p-1 rounded-2xl border border-white/5">
+            <button
+              type="button"
               onClick={() => {
                 setIsSignUp(false)
                 setError('')
-                setConfirmPassword('')
               }}
-              className={`flex-1 py-2 rounded-lg font-medium transition-all ${!isSignUp
-                  ? 'bg-blue-500 text-white'
-                  : 'text-slate-400 hover:text-slate-300'
-                }`}
+              className={`flex-1 py-2.5 rounded-lg font-semibold text-sm transition-all ${!isSignUp ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
             >
-              Login
-            </motion.button>
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
+              Sign In
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 setIsSignUp(true)
                 setError('')
               }}
-              className={`flex-1 py-2 rounded-lg font-medium transition-all ${isSignUp
-                  ? 'bg-purple-500 text-white'
-                  : 'text-slate-400 hover:text-slate-300'
-                }`}
+              className={`flex-1 py-2.5 rounded-lg font-semibold text-sm transition-all ${isSignUp ? 'bg-fuchsia-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
             >
-              Sign Up
-            </motion.button>
+              Register
+            </button>
           </div>
 
-          {/* Role Selection */}
           <div className="mb-6">
-            <label className="block text-sm font-medium text-slate-300 mb-2">Continue As</label>
+            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+              Select Your Role
+            </label>
             <div className="grid grid-cols-2 gap-2">
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                type="button"
-                onClick={() => {
-                  setSelectedRole('faculty')
-                  setError('')
-                }}
-                className={`py-2 rounded-lg font-medium transition-all border ${selectedRole === 'faculty'
-                    ? 'bg-amber-500/20 text-amber-200 border-amber-400/40'
-                    : 'text-slate-400 border-white/10 hover:text-slate-300'
-                  }`}
-              >
-                Faculty
-              </motion.button>
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
+              <button
                 type="button"
                 onClick={() => {
                   setSelectedRole('student')
                   setError('')
                 }}
-                className={`py-2 rounded-lg font-medium transition-all border ${selectedRole === 'student'
-                    ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/40'
-                    : 'text-slate-400 border-white/10 hover:text-slate-300'
-                  }`}
+                className={`py-2 rounded-lg font-semibold text-sm border transition-all ${selectedRole === 'student' ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30' : 'text-slate-400 border-white/5 bg-slate-950/30 hover:bg-slate-950/60'}`}
               >
                 Student
-              </motion.button>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedRole('faculty')
+                  setError('')
+                }}
+                className={`py-2 rounded-lg font-semibold text-sm border transition-all ${selectedRole === 'faculty' ? 'bg-amber-500/10 text-amber-300 border-amber-500/30' : 'text-slate-400 border-white/5 bg-slate-950/30 hover:bg-slate-950/60'}`}
+              >
+                Faculty
+              </button>
             </div>
           </div>
 
-          {/* Form */}
+          {error && (
+            <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-200 text-sm flex gap-2 items-start">
+              <BadgeInfo className="w-5 h-5 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Error Message */}
-            {error && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="px-4 py-3 rounded-lg bg-red-500/20 border border-red-500/50 text-red-200 text-sm"
-              >
-                {error}
-              </motion.div>
-            )}
+            {isSignUp ? (
+              selectedRole === 'student' ? (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-slate-400 font-medium mb-1">Full Name</label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                      <input
+                        type="text"
+                        value={studentName}
+                        onChange={(e) => setStudentName(e.target.value)}
+                        placeholder="John Doe"
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all"
+                      />
+                    </div>
+                  </div>
 
-            {/* Student ID (Student only) */}
-            {selectedRole === 'student' && (
-              <div className="relative">
-                <label htmlFor="student-id" className="block text-sm font-medium text-slate-300 mb-2">Student ID</label>
-                <input
-                  id="student-id"
-                  name="studentId"
-                  type="text"
-                  value={studentId}
-                  onChange={(e) => setStudentId(e.target.value)}
-                  placeholder="e.g., STU20250123"
-                  className="w-full px-4 py-3 rounded-lg bg-slate-800/50 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all"
-                />
+                  <div>
+                    <label className="block text-xs text-slate-400 font-medium mb-1">Student Registration ID</label>
+                    <div className="relative">
+                      <GraduationCap className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                      <input
+                        type="text"
+                        value={studentId}
+                        onChange={(e) => setStudentId(e.target.value)}
+                        placeholder="e.g. STU12345"
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-slate-400 font-medium mb-1">Profile Photo URL</label>
+                    <input
+                      type="url"
+                      value={studentProfilePhoto}
+                      onChange={(e) => setStudentProfilePhoto(e.target.value)}
+                      placeholder="https://..."
+                      className="w-full px-3 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-slate-400 font-medium mb-1">Full Name</label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                      <input
+                        type="text"
+                        value={facultyName}
+                        onChange={(e) => setFacultyName(e.target.value)}
+                        placeholder="Prof. Jane Smith"
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-slate-400 font-medium mb-1">Faculty Employee ID</label>
+                    <div className="relative">
+                      <GraduationCap className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                      <input
+                        type="text"
+                        value={facultyEmployeeId}
+                        onChange={(e) => setFacultyEmployeeId(e.target.value)}
+                        placeholder="FAC123"
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-slate-400 font-medium mb-1">Designation</label>
+                    <input
+                      type="text"
+                      value={facultyDesignation}
+                      onChange={(e) => setFacultyDesignation(e.target.value)}
+                      placeholder="Assistant Professor"
+                      className="w-full px-3 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-slate-400 font-medium mb-1">Subjects Taught (comma separated)</label>
+                    <input
+                      type="text"
+                      value={facultySubjects}
+                      onChange={(e) => setFacultySubjects(e.target.value)}
+                      placeholder="Data Structures, DBMS"
+                      className="w-full px-3 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-slate-400 font-medium mb-1">Profile Photo URL</label>
+                    <input
+                      type="url"
+                      value={facultyProfilePhoto}
+                      onChange={(e) => setFacultyProfilePhoto(e.target.value)}
+                      placeholder="https://..."
+                      className="w-full px-3 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 text-sm transition-all"
+                    />
+                  </div>
+                </div>
+              )
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs text-slate-400 font-medium mb-1">Email Address</label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 font-medium mb-1">Password</label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full pl-10 pr-12 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((value) => !value)}
+                      className="absolute right-3 top-3 text-slate-500 hover:text-slate-300"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 
-            {/* Faculty registration fields (Sign up + Faculty only) */}
-            {isSignUp && selectedRole === 'faculty' && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="grid grid-cols-1 md:grid-cols-2 gap-3"
-              >
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-slate-300 mb-2">Faculty Name</label>
-                  <input
-                    type="text"
-                    value={facultyName}
-                    onChange={(e) => setFacultyName(e.target.value)}
-                    placeholder="Dr. Jane Doe"
-                    className="w-full px-4 py-3 rounded-lg bg-slate-800/50 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">Faculty Department</label>
-                  <input
-                    type="text"
-                    value={facultyDepartment}
-                    onChange={(e) => setFacultyDepartment(e.target.value)}
-                    placeholder="CSE"
-                    className="w-full px-4 py-3 rounded-lg bg-slate-800/50 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">Faculty ID</label>
-                  <input
-                    type="text"
-                    value={facultyId}
-                    onChange={(e) => setFacultyId(e.target.value)}
-                    placeholder="FAC-102"
-                    className="w-full px-4 py-3 rounded-lg bg-slate-800/50 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">Phone Number</label>
-                  <input
-                    type="tel"
-                    value={phoneNumber}
-                    onChange={(e) => setPhoneNumber(e.target.value)}
-                    placeholder="+1 555 123 4567"
-                    className="w-full px-4 py-3 rounded-lg bg-slate-800/50 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all"
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-slate-300 mb-2">Designation</label>
-                  <input
-                    type="text"
-                    value={designation}
-                    onChange={(e) => setDesignation(e.target.value)}
-                    placeholder="Assistant Professor"
-                    className="w-full px-4 py-3 rounded-lg bg-slate-800/50 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all"
-                  />
-                </div>
-              </motion.div>
-            )}
-
-            {/* Email Field */}
-            <div className="relative">
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                {selectedRole === 'faculty' ? 'Faculty Email' : 'Email Address'}
-              </label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-3.5 w-5 h-5 text-slate-400" />
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="your@email.com"
-                  className="w-full pl-10 pr-4 py-3 rounded-lg bg-slate-800/50 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all"
-                />
-              </div>
-            </div>
-
-            {/* Password Field */}
-            <div className="relative">
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Password
-              </label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3.5 w-5 h-5 text-slate-400" />
-                <input
-                  id="password"
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full pl-10 pr-10 py-3 rounded-lg bg-slate-800/50 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all"
-                />
-                <IconButton
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  ariaLabel={showPassword ? 'Hide password' : 'Show password'}
-                  className="absolute right-3 top-3.5 text-slate-400 hover:text-slate-300 transition-colors"
-                >
-                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </IconButton>
-              </div>
-            </div>
-
-            {/* Confirm Password (Sign Up Only) */}
             {isSignUp && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="relative"
-              >
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Confirm Password
-                </label>
+              <div>
+                <label className="block text-xs text-slate-400 font-medium mb-1">Confirm Password</label>
                 <div className="relative">
-                  <Lock className="absolute left-3 top-3.5 w-5 h-5 text-slate-400" />
+                  <Lock className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
                   <input
-                    id="confirm-password"
-                    name="confirmPassword"
                     type={showPassword ? 'text' : 'password'}
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full pl-10 pr-4 py-3 rounded-lg bg-slate-800/50 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all"
+                    placeholder="Re-enter password"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/50 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 text-sm transition-all"
                   />
                 </div>
-              </motion.div>
-            )}
-
-            {/* Remember Me / Forgot Password */}
-            {!isSignUp && (
-              <div className="flex items-center justify-between text-sm">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    id="remember-me"
-                    name="remember"
-                    type="checkbox"
-                    className="rounded bg-slate-800 border-white/10 text-blue-500 focus:ring-blue-500"
-                  />
-                  <span className="text-slate-400">Remember me</span>
-                </label>
-                <a
-                  href="#"
-                  className="text-blue-400 hover:text-blue-300 transition-colors"
-                >
-                  Forgot password?
-                </a>
               </div>
             )}
 
-            {/* Submit Button */}
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              disabled={isLoading}
+            <button
               type="submit"
-              className="w-full mt-6 py-3 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 group"
+              disabled={isLoading}
+              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-cyan-600 to-fuchsia-600 hover:from-cyan-500 hover:to-fuchsia-500 text-white font-bold text-sm transition-all shadow-lg shadow-cyan-500/20 disabled:opacity-50"
             >
-              {isLoading ? (
-                <>
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Processing...</span>
-                </>
-              ) : (
-                <>
-                  <span>
-                    {isSignUp
-                      ? selectedRole === 'faculty'
-                        ? 'Create Faculty Profile'
-                        : 'Create Student Account'
-                      : `Login as ${selectedRole === 'faculty' ? 'Faculty' : 'Student'}`}
-                  </span>
-                </>
-              )}
-            </motion.button>
+              {isLoading ? 'Please wait...' : isSignUp ? 'Create Account' : 'Sign In'}
+            </button>
           </form>
-
-
-        </motion.div>
-
-        {/* Footer Text */}
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.6 }}
-          className="text-center text-slate-400 text-sm mt-8"
-        >
-          {isSignUp ? 'Already have an account? ' : "Don't have an account? "}
-          <button
-            onClick={() => {
-              setIsSignUp(!isSignUp)
-              setError('')
-              setConfirmPassword('')
-            }}
-            className="text-blue-400 hover:text-blue-300 transition-colors font-medium"
-          >
-            {isSignUp ? 'Login' : 'Sign up'}
-          </button>
-        </motion.p>
-      </motion.div>
+        </motion.section>
+      </div>
     </main>
   )
 }

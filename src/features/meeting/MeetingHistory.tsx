@@ -48,11 +48,11 @@ export default function MeetingHistory({ meetings, onPlayRecording }: MeetingHis
     let filtered = meetings
 
     if (filter === 'day') {
-      filtered = meetings.filter((m) => now.getTime() - m.date.getTime() < oneDay)
+      filtered = meetings.filter((m) => m.date && (now.getTime() - m.date.getTime() < oneDay))
     } else if (filter === 'week') {
-      filtered = meetings.filter((m) => now.getTime() - m.date.getTime() < oneWeek)
+      filtered = meetings.filter((m) => m.date && (now.getTime() - m.date.getTime() < oneWeek))
     } else if (filter === 'month') {
-      filtered = meetings.filter((m) => now.getTime() - m.date.getTime() < oneMonth)
+      filtered = meetings.filter((m) => m.date && (now.getTime() - m.date.getTime() < oneMonth))
     }
 
     if (sectionFilter !== 'all') {
@@ -60,10 +60,12 @@ export default function MeetingHistory({ meetings, onPlayRecording }: MeetingHis
     }
 
     return filtered.sort((a, b) => {
+      const aDate = a.date || new Date(0)
+      const bDate = b.date || new Date(0)
       if (sortBy === 'date') {
-        return b.date.getTime() - a.date.getTime()
+        return bDate.getTime() - aDate.getTime()
       }
-      return b.duration - a.duration
+      return (b.duration || 0) - (a.duration || 0)
     })
   }
 
@@ -78,9 +80,9 @@ export default function MeetingHistory({ meetings, onPlayRecording }: MeetingHis
 
   const getStats = () => {
     const totalMeetings = meetings.length
-    const totalDuration = meetings.reduce((acc, m) => acc + m.duration, 0)
+    const totalDuration = meetings.reduce((acc, m) => acc + (m.duration || 0), 0)
     const avgDuration = totalMeetings > 0 ? Math.round(totalDuration / totalMeetings) : 0
-    const uniqueParticipants = new Set(meetings.flatMap((m) => m.participants)).size
+    const uniqueParticipants = new Set(meetings.flatMap((m) => m.participants || [])).size
 
     return {
       totalMeetings,

@@ -6,22 +6,22 @@
 
 # Test info
 
-- Name: e2e\tests\features.spec.cjs >> Feature smoke tests >> faculty quick-start meeting flow
-- Location: e2e\tests\features.spec.cjs:4:3
+- Name: e2e\tests\features.spec.cjs >> Feature smoke tests >> student request doubt flow
+- Location: e2e\tests\features.spec.cjs:30:3
 
 # Error details
 
 ```
 Error: expect(locator).toBeVisible() failed
 
-Locator: locator('role=heading[name="Dashboard"]')
+Locator: locator('role=heading[name="Student Dashboard"]')
 Expected: visible
-Timeout: 5000ms
+Timeout: 3000ms
 Error: element(s) not found
 
 Call log:
-  - Expect "toBeVisible" with timeout 5000ms
-  - waiting for locator('role=heading[name="Dashboard"]')
+  - Expect "toBeVisible" with timeout 3000ms
+  - waiting for locator('role=heading[name="Student Dashboard"]')
 
 ```
 
@@ -35,9 +35,13 @@ Call log:
   - text: Continue As
   - button "Faculty"
   - button "Student"
-  - text: "Firebase: Error (auth/invalid-credential). Faculty Email"
+  - text: "Firebase: Error (auth/invalid-credential). Student ID"
+  - textbox "Student ID":
+    - /placeholder: e.g., STU20250123
+    - text: STU001
+  - text: Email Address
   - img
-  - textbox "your@email.com": faculty@demo.com
+  - textbox "your@email.com": student@demo.com
   - text: Password
   - img
   - textbox "••••••••": password1
@@ -47,7 +51,7 @@ Call log:
   - text: Remember me
   - link "Forgot password?":
     - /url: "#"
-  - button "Login as Faculty"
+  - button "Login as Student"
   - paragraph:
     - text: Don't have an account?
     - button "Sign up"
@@ -65,8 +69,7 @@ Call log:
   7  |     await page.fill('input[name="email"]', 'faculty@demo.com');
   8  |     await page.fill('input[name="password"]', 'password1');
   9  |     await page.click('text=Login as Faculty');
-> 10 |     await expect(page.locator('role=heading[name="Dashboard"]')).toBeVisible({ timeout: 5000 });
-     |                                                                  ^ Error: expect(locator).toBeVisible() failed
+  10 |     await expect(page.locator('role=heading[name="Dashboard"]')).toBeVisible({ timeout: 5000 });
   11 | 
   12 |     // Start quick meeting and invite all
   13 |     await page.click('text=Start Meeting');
@@ -93,7 +96,8 @@ Call log:
   34 |     await page.fill('input[name="email"]', 'student@demo.com');
   35 |     await page.fill('input[name="password"]', 'password1');
   36 |     await page.click('text=Login as Student');
-  37 |     await expect(page.locator('role=heading[name="Student Dashboard"]')).toBeVisible({ timeout: 3000 });
+> 37 |     await expect(page.locator('role=heading[name="Student Dashboard"]')).toBeVisible({ timeout: 3000 });
+     |                                                                          ^ Error: expect(locator).toBeVisible() failed
   38 | 
   39 |     // Open request form and send
   40 |     await page.fill('input[placeholder="Topic (e.g., DSA, Networks)"]', 'Test Doubt');

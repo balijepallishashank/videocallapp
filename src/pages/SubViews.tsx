@@ -1,0 +1,1167 @@
+import { useEffect, useMemo, useState, lazy, Suspense } from 'react'
+import { useNavigate, useOutletContext } from 'react-router-dom'
+import { Calendar, Clapperboard, ClipboardCheck, HelpCircle, Link as LinkIcon, Plus, Mic, Trash2 } from 'lucide-react'
+import {
+  db,
+  createClass,
+  joinClassByCode,
+  subscribeToClasses,
+  subscribeToLiveMeetings,
+  subscribeToMeetings,
+  subscribeToScheduledMeetings,
+  subscribeToClassMembers,
+  subscribeToMeetingAttendance,
+  saveUserProfile,
+  startLiveMeeting,
+  endLiveMeeting,
+  createScheduledMeeting,
+  updateScheduledMeeting,
+  deleteScheduledMeeting,
+  createNotification,
+  type LiveMeetingInvite,
+} from '../services/db'
+import { collection, query, where, getDocs } from 'firebase/firestore'
+import MeetingHistory from '../features/meeting/MeetingHistory'
+import type { MeetingRecord } from '../features/meeting/MeetingHistory'
+
+const SettingsPage = lazy(() => import('./SettingsPage'))
+
+interface OutletContext {
+  currentUser: any
+  role: 'faculty' | 'student'
+  isFaculty: boolean
+  isStudent: boolean
+  addToast: (message: string, type?: 'info' | 'success' | 'warning' | 'error') => void
+  liveInvite: LiveMeetingInvite | null
+  joinLiveInvite: (invite: LiveMeetingInvite) => void
+  notifications: any[]
+}
+
+function ClassCard({ item, currentUser, navigate, addToast }: { item: any; currentUser: any; navigate: any; addToast: any }) {
+  const [studentCount, setStudentCount] = useState(0)
+  const [isActiveMeeting, setIsActiveMeeting] = useState(false)
+  const [attendanceRate, setAttendanceRate] = useState<number | null>(null)
+  const [upcomingMeetingText, setUpcomingMeetingText] = useState('None')
+  const [copiedCode, setCopiedCode] = useState(false)
+  const [copiedLink, setCopiedLink] = useState(false)
+
+  useEffect(() => {
+    const unsubMembers = subscribeToClassMembers(item.id, (list) => {
+      setStudentCount(list.length)
+    })
+    const unsubLive = subscribeToLiveMeetings((list) => {
+      const active = list.some((m) => m.classId === item.id)
+      setIsActiveMeeting(active)
+    })
+    const unsubAttendance = subscribeToMeetingAttendance(item.id, (list) => {
+      if (list.length === 0) {
+        setAttendanceRate(null)
+        return
+      }
+      const presentOrLate = list.filter((e: any) => e.status === 'Present' || e.status === 'Late' || e.status === 'Attended').length
+      const rate = Math.round((presentOrLate / list.length) * 100)
+      setAttendanceRate(rate)
+    })
+    const unsubScheduled = subscribeToScheduledMeetings((list) => {
+      const classMeetings = list.filter((m: any) => m.classId === item.id && m.status === 'scheduled')
+      if (classMeetings.length === 0) {
+        setUpcomingMeetingText('None')
+        return
+      }
+      const now = new Date().getTime()
+      const future = classMeetings
+        .map((m: any) => ({ ...m, timeMs: new Date(m.scheduledDate).getTime() }))
+        .filter((m: any) => m.timeMs > now)
+        .sort((a: any, b: any) => a.timeMs - b.timeMs)
+
+      if (future.length > 0) {
+        const next = future[0]
+        const dt = new Date(next.scheduledDate)
+        setUpcomingMeetingText(`${dt.toLocaleDateString()} ${next.startTime || ''}`)
+      } else {
+        setUpcomingMeetingText('None')
+      }
+    })
+
+    return () => {
+      unsubMembers()
+      unsubLive()
+      unsubAttendance()
+      unsubScheduled()
+    }
+  }, [item.id])
+
+  const copyCode = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!item.classCode) return
+    await navigator.clipboard.writeText(item.classCode)
+    setCopiedCode(true)
+    addToast('Class code copied!', 'success')
+    setTimeout(() => setCopiedCode(false), 1500)
+  }
+
+  const copyLink = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!item.inviteLink) return
+    await navigator.clipboard.writeText(item.inviteLink)
+    setCopiedLink(true)
+    addToast('Invite link copied!', 'success')
+    setTimeout(() => setCopiedLink(false), 1500)
+  }
+
+  return (
+    <div className="group rounded-[1.75rem] border border-white/10 bg-slate-950/50 p-6 flex flex-col justify-between transition hover:-translate-y-0.5 hover:border-cyan-400/30 hover:bg-slate-950/70">
+      <div className="space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-xl font-bold text-white tracking-tight leading-tight truncate">{item.name}</h3>
+            <p className="mt-1 text-sm text-cyan-400 font-semibold truncate">{item.subject}</p>
+          </div>
+          <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400 flex-shrink-0">
+            {item.classCode}
+          </span>
+        </div>
+
+        <p className="text-sm text-slate-300 line-clamp-2 leading-relaxed">
+          {item.description || 'Open the class workspace to manage meetings, materials, and members.'}
+        </p>
+
+        <div className="pt-4 border-t border-white/5 space-y-2.5">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-slate-400">Students</span>
+            <span className="text-white font-semibold">{studentCount}</span>
+          </div>
+
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-slate-400">Attendance</span>
+            <span className="text-white font-semibold">
+              {attendanceRate !== null ? `${attendanceRate}%` : 'N/A'}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-slate-400">Upcoming Meeting</span>
+            <span className="text-white font-semibold truncate max-w-[160px]" title={upcomingMeetingText}>
+              {upcomingMeetingText}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-slate-400">Active Meeting</span>
+            {isActiveMeeting ? (
+              <span className="flex items-center gap-1.5 font-semibold text-emerald-400">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                Live
+              </span>
+            ) : (
+              <span className="text-slate-500 font-medium">No</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-6 space-y-2">
+        <button
+          onClick={() => navigate(`/${currentUser.role}/class/${item.id}`)}
+          className="w-full rounded-xl bg-cyan-500 hover:bg-cyan-400 py-2.5 text-center text-sm font-bold text-slate-950 transition duration-200"
+        >
+          Open Class
+        </button>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={copyCode}
+            className="rounded-lg border border-white/10 bg-white/5 py-2 text-center text-xs font-semibold text-slate-300 hover:bg-white/10 hover:text-white transition"
+          >
+            {copiedCode ? 'Copied!' : 'Copy Code'}
+          </button>
+          <button
+            onClick={copyLink}
+            className="rounded-lg border border-white/10 bg-white/5 py-2 text-center text-xs font-semibold text-slate-300 hover:bg-white/10 hover:text-white transition"
+          >
+            {copiedLink ? 'Copied!' : 'Copy Invite'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function ClassesView() {
+  const { currentUser, addToast, isFaculty } = useOutletContext<OutletContext>()
+  const navigate = useNavigate()
+  const [classesList, setClassesList] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showCreateForm, setShowCreateForm] = useState(false)
+  const [showJoinForm, setShowJoinForm] = useState(false)
+  const [newClassName, setNewClassName] = useState('')
+  const [newSubject, setNewSubject] = useState('')
+  const [newDescription, setNewDescription] = useState('')
+  const [joinCode, setJoinCode] = useState('')
+
+  useEffect(() => {
+    if (!currentUser || !currentUser.id) {
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    const unsub = subscribeToClasses(
+      currentUser.role,
+      currentUser.id,
+      (list) => {
+        setClassesList(list)
+        setLoading(false)
+      },
+      (err: any) => {
+        console.error('Firestore subscribeToClasses error:', err)
+        const isPermissionDenied = err?.code === 'permission-denied' || 
+                                   err?.message?.includes('permission') || 
+                                   err?.message?.includes('Permissions');
+        if (isPermissionDenied) {
+          addToast("You don't have permission to load classes. Please verify your account role and Firestore rules.", 'error')
+        } else {
+          addToast(err instanceof Error ? err.message : 'Failed to load classes.', 'error')
+        }
+        setLoading(false)
+      }
+    )
+    return () => unsub()
+  }, [currentUser])
+
+  const handleCreateClass = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newClassName.trim() || !newSubject.trim()) {
+      addToast('Please add a class name and subject.', 'warning')
+      return
+    }
+
+
+    if (!currentUser || !currentUser.id || currentUser.role !== 'faculty') {
+      addToast("You must be authenticated as faculty to create a class.", "error")
+      return
+    }
+
+    try {
+      const created = await createClass({
+        name: newClassName.trim(),
+        subject: newSubject.trim(),
+        description: newDescription.trim(),
+        facultyId: currentUser.id,
+        facultyName: currentUser.name,
+      })
+      addToast(`Class "${created.name}" created successfully.`, 'success')
+      setNewClassName('')
+      setNewSubject('')
+      setNewDescription('')
+      setShowCreateForm(false)
+    } catch (err: any) {
+      console.error('Firestore createClass error:', err)
+      const isPermissionDenied = err?.code === 'permission-denied' || 
+                                   err?.message?.includes('permission') || 
+                                   err?.message?.includes('Permissions');
+      if (isPermissionDenied) {
+        addToast("You don't have permission to create classes. Please verify your account role and Firestore rules.", 'error')
+      } else {
+        addToast(err instanceof Error ? err.message : 'Failed to create class.', 'error')
+      }
+    }
+  }
+
+  const handleJoinClass = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!joinCode.trim()) {
+      addToast('Please enter a class code.', 'warning')
+      return
+    }
+
+    try {
+      const result = await joinClassByCode(currentUser.id, currentUser.name, currentUser.email, joinCode.trim())
+      addToast(`Joined ${result.className}.`, 'success')
+      setJoinCode('')
+      setShowJoinForm(false)
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Failed to join class.', 'error')
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-3xl font-black text-white">Classes</h1>
+          <p className="mt-1 text-slate-400">Manage the class cards that feed the new workspace.</p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          {isFaculty && (
+            <button
+              onClick={async () => {
+                try {
+                  await saveUserProfile(currentUser.id, { role: 'faculty' } as any)
+                  addToast('Firestore user role set to "faculty" successfully! Please reload the page.', 'success')
+                } catch (e) {
+                  addToast('Failed to update role: ' + (e instanceof Error ? e.message : String(e)), 'error')
+                }
+              }}
+              className="inline-flex items-center gap-2 rounded-xl border border-dashed border-red-500/40 bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-300 hover:bg-red-500/20"
+            >
+              Fix Faculty Role (Debug)
+            </button>
+          )}
+          {isFaculty ? (
+            <button onClick={() => setShowCreateForm((value) => !value)} className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-bold text-slate-950">
+              <Plus className="h-4 w-4" />
+              Create class
+            </button>
+          ) : (
+            <button onClick={() => setShowJoinForm((value) => !value)} className="inline-flex items-center gap-2 rounded-xl bg-fuchsia-500 px-4 py-2.5 text-sm font-bold text-white">
+              <LinkIcon className="h-4 w-4" />
+              Join class
+            </button>
+          )}
+        </div>
+      </div>
+
+      {showCreateForm && isFaculty && (
+        <form onSubmit={handleCreateClass} className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">Class name</label>
+              <input value={newClassName} onChange={(e) => setNewClassName(e.target.value)} className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-3 text-white placeholder-slate-600 focus:outline-none" placeholder="Software Engineering" />
+            </div>
+            <div>
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">Subject</label>
+              <input value={newSubject} onChange={(e) => setNewSubject(e.target.value)} className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-3 text-white placeholder-slate-600 focus:outline-none" placeholder="SE-401" />
+            </div>
+          </div>
+          <div>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">Description</label>
+            <textarea value={newDescription} onChange={(e) => setNewDescription(e.target.value)} className="min-h-[100px] w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-3 text-white placeholder-slate-600 focus:outline-none" placeholder="Short description for the class hub" />
+          </div>
+          <button className="rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-bold text-slate-950">Save class</button>
+        </form>
+      )}
+
+      {showJoinForm && !isFaculty && (
+        <form onSubmit={handleJoinClass} className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl space-y-4">
+          <div>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">Class code</label>
+            <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-3 text-white placeholder-slate-600 focus:outline-none" placeholder="VP-ABC-1234" />
+          </div>
+          <button className="rounded-xl bg-fuchsia-500 px-4 py-2.5 text-sm font-bold text-white">Join class</button>
+        </form>
+      )}
+
+      {loading ? (
+        <div className="rounded-3xl border border-white/10 bg-white/5 p-8 text-center text-slate-400">Loading classes...</div>
+      ) : classesList.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-white/10 bg-white/5 p-8 text-center text-slate-400">
+          {isFaculty ? "No classes yet. Create your first class." : "No classes yet."}
+        </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {classesList.map((item) => (
+            <ClassCard
+              key={item.id}
+              item={item}
+              currentUser={currentUser}
+              navigate={navigate}
+              addToast={addToast}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function FacultyMeetingsView() {
+  const { currentUser, addToast } = useOutletContext<OutletContext>()
+  const navigate = useNavigate()
+  
+  const [classesList, setClassesList] = useState<any[]>([])
+  const [liveMeetings, setLiveMeetings] = useState<LiveMeetingInvite[]>([])
+  const [showStartModal, setShowStartModal] = useState(false)
+  const [selectedClassId, setSelectedClassId] = useState('')
+  const [meetingTitle, setMeetingTitle] = useState('')
+  const [isStarting, setIsStarting] = useState(false)
+
+  // Fetch classes
+  useEffect(() => {
+    if (!currentUser) return
+    return subscribeToClasses('faculty', currentUser.id, setClassesList)
+  }, [currentUser])
+
+  // Subscribe to live meetings
+  useEffect(() => {
+    const unsub = subscribeToLiveMeetings((list) => {
+      const filtered = list.filter((m) => m.facultyId === currentUser?.id)
+      setLiveMeetings(filtered)
+    })
+    return () => unsub()
+  }, [currentUser])
+
+  const handleStartLiveMeeting = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedClassId || !meetingTitle.trim() || !currentUser) return
+
+    setIsStarting(true)
+    try {
+      const cls = classesList.find((c) => c.id === selectedClassId)
+      if (!cls) throw new Error('Selected class not found.')
+
+      const channelName = selectedClassId
+      
+      await startLiveMeeting(channelName, {
+        id: channelName,
+        title: meetingTitle.trim(),
+        sectionName: cls.name,
+        host: currentUser.name,
+        invitedStudents: [],
+        classId: selectedClassId,
+        facultyId: currentUser.id,
+        subject: cls.subject,
+      })
+
+      const membersSnap = await getDocs(query(collection(db, 'class_members'), where('classId', '==', selectedClassId)))
+      await Promise.all(
+        membersSnap.docs.map((memberDoc) => {
+          const member = memberDoc.data()
+          return createNotification({
+            userId: member.studentId,
+            title: `${cls.name} is live`,
+            description: `${currentUser.name} started live class: ${meetingTitle.trim()}. Join now!`,
+            type: 'info',
+            priority: 'high',
+            classId: selectedClassId,
+            meetingId: channelName,
+          })
+        })
+      )
+
+      addToast('Live meeting started successfully!', 'success')
+      setShowStartModal(false)
+      setMeetingTitle('')
+      
+      navigate(`/faculty/class/${selectedClassId}?join=true`)
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Failed to start meeting.', 'error')
+    } finally {
+      setIsStarting(false)
+    }
+  }
+
+  const handleEndLiveMeeting = async (classId: string) => {
+    try {
+      await endLiveMeeting(classId)
+      addToast('Live meeting ended.', 'success')
+    } catch (err) {
+      addToast('Failed to end meeting.', 'error')
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-3xl font-black text-white">Live Meetings</h1>
+          <p className="mt-1 text-slate-400">Manage and join active online classrooms.</p>
+        </div>
+        <button
+          onClick={() => setShowStartModal(true)}
+          className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400 transition"
+        >
+          <Plus className="h-4 w-4" />
+          Start New Live Meeting
+        </button>
+      </div>
+
+      {liveMeetings.length === 0 ? (
+        <div className="rounded-[2rem] border border-dashed border-white/10 bg-slate-950/40 p-12 text-center flex flex-col items-center justify-center space-y-4">
+          <div className="rounded-full bg-slate-900 p-4 border border-white/5">
+            <Mic className="h-8 w-8 text-slate-500" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-lg font-bold text-white">No live meetings running</h3>
+            <p className="text-slate-400 max-w-sm text-sm">Create an instant meeting to start teaching your students right away.</p>
+          </div>
+          <button
+            onClick={() => setShowStartModal(true)}
+            className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/20 transition"
+          >
+            Start New Live Meeting
+          </button>
+        </div>
+      ) : (
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {liveMeetings.map((meeting) => {
+            const cls = classesList.find((c) => c.id === meeting.classId)
+            const activeStudents = cls?.activeStudentCount || 0
+            
+            return (
+              <div key={meeting.id} className="rounded-3xl border border-white/10 bg-slate-950/60 p-6 flex flex-col justify-between space-y-6 hover:border-emerald-500/30 transition animate-fade-in">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                      Live
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span title="Microphone Active" className="text-emerald-400"><Mic className="h-4 w-4" /></span>
+                      <span title="Not Recording" className="text-slate-600"><Clapperboard className="h-4 w-4" /></span>
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-lg font-bold text-white line-clamp-1">{meeting.title}</h3>
+                    <p className="text-sm font-semibold text-cyan-400 mt-0.5">{meeting.sectionName}</p>
+                    <p className="text-xs text-slate-400 mt-1">Subject: {meeting.subject}</p>
+                  </div>
+
+                  <div className="pt-2 border-t border-white/5 grid grid-cols-2 gap-2 text-xs text-slate-400">
+                    <div>
+                      <span className="block text-[10px] uppercase tracking-wide text-slate-500">Started At</span>
+                      <span className="font-semibold text-white">
+                        {meeting.startedAt ? new Date(meeting.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] uppercase tracking-wide text-slate-500">Students Enrolled</span>
+                      <span className="font-semibold text-white">{activeStudents} enrolled</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => navigate(`/faculty/class/${meeting.classId}?join=true`)}
+                    className="flex-1 rounded-xl bg-emerald-500 py-2 text-center text-xs font-bold text-slate-950 hover:bg-emerald-400 transition"
+                  >
+                    Join Meeting
+                  </button>
+                  <button
+                    onClick={() => handleEndLiveMeeting(meeting.classId!)}
+                    className="rounded-xl border border-white/10 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-400 hover:bg-red-500/20 transition flex items-center gap-1.5"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    End
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {showStartModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-slate-950 p-6 md:p-8 shadow-2xl space-y-6">
+            <div>
+              <h2 className="text-2xl font-black text-white">Start Live Meeting</h2>
+              <p className="text-slate-400 text-sm mt-1">Launch an instant session for students to join.</p>
+            </div>
+            
+            <form onSubmit={handleStartLiveMeeting} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Select Class</label>
+                <select
+                  required
+                  value={selectedClassId}
+                  onChange={(e) => setSelectedClassId(e.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                >
+                  <option value="">-- Choose Class --</option>
+                  {classesList.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.subject})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Meeting Title</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Introduction to Algorithms"
+                  value={meetingTitle}
+                  onChange={(e) => setMeetingTitle(e.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowStartModal(false)}
+                  className="flex-1 rounded-2xl border border-white/10 bg-slate-950 py-3 text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isStarting}
+                  className="flex-1 rounded-2xl bg-emerald-500 py-3 text-sm font-bold text-slate-950 hover:bg-emerald-400 transition disabled:opacity-50"
+                >
+                  {isStarting ? 'Starting...' : 'Start Meeting'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function ScheduledMeetingsView() {
+  const { currentUser, addToast } = useOutletContext<OutletContext>()
+  const navigate = useNavigate()
+
+  const [classesList, setClassesList] = useState<any[]>([])
+  const [scheduledMeetings, setScheduledMeetings] = useState<any[]>([])
+  const [showFormModal, setShowFormModal] = useState(false)
+  const [editingMeeting, setEditingMeeting] = useState<any | null>(null)
+  
+  const [classId, setClassId] = useState('')
+  const [title, setTitle] = useState('')
+  const [date, setDate] = useState('')
+  const [time, setTime] = useState('')
+  const [duration, setDuration] = useState('60')
+  const [description, setDescription] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+
+  useEffect(() => {
+    if (!currentUser) return
+    return subscribeToClasses('faculty', currentUser.id, setClassesList)
+  }, [currentUser])
+
+  useEffect(() => {
+    const unsub = subscribeToScheduledMeetings((list) => {
+      const filtered = list.filter((meeting: any) => !currentUser || meeting.facultyId === currentUser.id)
+      setScheduledMeetings(filtered)
+    })
+    return () => unsub()
+  }, [currentUser])
+
+  const handleOpenScheduleModal = (meeting: any | null = null) => {
+    if (meeting) {
+      setEditingMeeting(meeting)
+      setClassId(meeting.classId || '')
+      setTitle(meeting.title || '')
+      const schedDate = new Date(meeting.scheduledDate)
+      setDate(schedDate.toISOString().split('T')[0])
+      setTime(schedDate.toTimeString().slice(0, 5))
+      setDuration(String(meeting.duration || '60'))
+      setDescription(meeting.description || '')
+    } else {
+      setEditingMeeting(null)
+      setClassId('')
+      setTitle('')
+      setDate('')
+      setTime('')
+      setDuration('60')
+      setDescription('')
+    }
+    setShowFormModal(true)
+  }
+
+  const handleSaveMeeting = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!classId || !title.trim() || !date || !time || !currentUser) return
+
+    setIsSaving(true)
+    try {
+      const cls = classesList.find((c) => c.id === classId)
+      if (!cls) throw new Error('Selected class not found.')
+
+      const scheduledAt = new Date(`${date}T${time}`)
+      const endTime = new Date(scheduledAt.getTime() + Number(duration) * 60000)
+
+      const payload = {
+        classId,
+        className: cls.name,
+        title: title.trim(),
+        description: description.trim(),
+        facultyId: currentUser.id,
+        facultyName: currentUser.name,
+        scheduledDate: scheduledAt.toISOString(),
+        startTime: scheduledAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        endTime: endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        duration: Number(duration),
+        status: 'scheduled',
+      }
+
+      if (editingMeeting) {
+        await updateScheduledMeeting(editingMeeting.id, payload as any)
+        addToast('Scheduled meeting updated successfully!', 'success')
+      } else {
+        await createScheduledMeeting(payload as any)
+        addToast('Meeting scheduled successfully!', 'success')
+      }
+
+      setShowFormModal(false)
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Failed to save scheduled meeting.', 'error')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleDeleteMeeting = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this scheduled meeting?')) return
+    try {
+      await deleteScheduledMeeting(id)
+      addToast('Scheduled meeting deleted.', 'success')
+    } catch (err) {
+      addToast('Failed to delete meeting.', 'error')
+    }
+  }
+
+  const handleStartNow = async (meeting: any) => {
+    try {
+      await startLiveMeeting(meeting.classId, {
+        id: meeting.classId,
+        title: meeting.title,
+        sectionName: meeting.className,
+        host: currentUser?.name || 'Faculty',
+        invitedStudents: [],
+        classId: meeting.classId,
+        facultyId: currentUser?.id || '',
+        subject: meeting.description || 'Scheduled Lecture',
+      })
+      addToast('Meeting started live now!', 'success')
+      navigate(`/faculty/class/${meeting.classId}?join=true`)
+    } catch (err) {
+      addToast('Failed to start meeting.', 'error')
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-3xl font-black text-white">Scheduled Meetings</h1>
+          <p className="mt-1 text-slate-400">Plan and structure future online sessions.</p>
+        </div>
+        <button
+          onClick={() => handleOpenScheduleModal()}
+          className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-400 transition"
+        >
+          <Plus className="h-4 w-4" />
+          Schedule Meeting
+        </button>
+      </div>
+
+      {scheduledMeetings.length === 0 ? (
+        <div className="rounded-[2rem] border border-dashed border-white/10 bg-slate-950/40 p-12 text-center flex flex-col items-center justify-center space-y-4">
+          <div className="rounded-full bg-slate-900 p-4 border border-white/5">
+            <Calendar className="h-8 w-8 text-slate-500" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-lg font-bold text-white">No upcoming meetings</h3>
+            <p className="text-slate-400 max-w-sm text-sm">Schedule lectures or discussions ahead of time. Students will see them on their class dashboard.</p>
+          </div>
+          <button
+            onClick={() => handleOpenScheduleModal()}
+            className="rounded-xl bg-cyan-500/10 border border-cyan-500/20 px-4 py-2 text-sm font-semibold text-cyan-300 hover:bg-cyan-500/20 transition"
+          >
+            Schedule a Meeting
+          </button>
+        </div>
+      ) : (
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {scheduledMeetings.map((meeting) => (
+            <div key={meeting.id} className="rounded-3xl border border-white/10 bg-slate-950/60 p-6 flex flex-col justify-between space-y-6 hover:border-cyan-500/30 transition animate-fade-in">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="rounded-full bg-cyan-500/15 px-3 py-1 text-xs font-semibold text-cyan-300">
+                    Upcoming
+                  </span>
+                  <span className="text-xs text-slate-400 font-medium">
+                    {meeting.duration} min duration
+                  </span>
+                </div>
+
+                <div>
+                  <h3 className="text-lg font-bold text-white line-clamp-1">{meeting.title}</h3>
+                  <p className="text-sm font-semibold text-cyan-400 mt-0.5">{meeting.className}</p>
+                  {meeting.description && (
+                    <p className="text-xs text-slate-400 mt-2 line-clamp-2 bg-slate-900/40 p-2 rounded-xl border border-white/5">
+                      {meeting.description}
+                    </p>
+                  )}
+                </div>
+
+                <div className="pt-2 border-t border-white/5 grid grid-cols-2 gap-2 text-xs text-slate-400">
+                  <div>
+                    <span className="block text-[10px] uppercase tracking-wide text-slate-500">Date</span>
+                    <span className="font-semibold text-white">
+                      {meeting.scheduledDate ? new Date(meeting.scheduledDate).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) : 'N/A'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] uppercase tracking-wide text-slate-500">Time</span>
+                    <span className="font-semibold text-white">
+                      {meeting.startTime || 'N/A'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleStartNow(meeting)}
+                  className="flex-1 rounded-xl bg-cyan-500 py-2 text-center text-xs font-bold text-slate-950 hover:bg-cyan-400 transition"
+                >
+                  Start Now
+                </button>
+                <button
+                  onClick={() => handleOpenScheduleModal(meeting)}
+                  className="rounded-xl border border-white/10 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-900 transition"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDeleteMeeting(meeting.id)}
+                  className="rounded-xl border border-white/10 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-400 hover:bg-red-500/20 transition flex items-center gap-1.5"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showFormModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-slate-950 p-6 md:p-8 shadow-2xl space-y-6">
+            <div>
+              <h2 className="text-2xl font-black text-white">
+                {editingMeeting ? 'Edit Scheduled Meeting' : 'Schedule Class Meeting'}
+              </h2>
+              <p className="text-slate-400 text-sm mt-1">Set the date and details for this session.</p>
+            </div>
+
+            <form onSubmit={handleSaveMeeting} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Select Class</label>
+                <select
+                  required
+                  value={classId}
+                  onChange={(e) => setClassId(e.target.value)}
+                  disabled={!!editingMeeting}
+                  className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500/50 disabled:opacity-50"
+                >
+                  <option value="">-- Choose Class --</option>
+                  {classesList.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.subject})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Meeting Title</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Chapter 3 Review Session"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500/50"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Time</label>
+                  <input
+                    type="time"
+                    required
+                    value={time}
+                    onChange={(e) => setTime(e.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500/50"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Duration (Minutes)</label>
+                <input
+                  type="number"
+                  required
+                  min="5"
+                  max="480"
+                  value={duration}
+                  onChange={(e) => setDuration(e.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500/50"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Description</label>
+                <textarea
+                  placeholder="Topic guidelines, syllabus cover, etc."
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={3}
+                  className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50 resize-none"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowFormModal(false)}
+                  className="flex-1 rounded-2xl border border-white/10 bg-slate-950 py-3 text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="flex-1 rounded-2xl bg-cyan-500 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-400 transition disabled:opacity-50"
+                >
+                  {isSaving ? 'Saving...' : 'Save Schedule'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function JoinMeetingView() {
+  const navigate = useNavigate()
+  useEffect(() => {
+    navigate('/student/classes', { replace: true })
+  }, [navigate])
+  return null
+}
+
+export function MeetingHistoryView() {
+  const { currentUser, isStudent } = useOutletContext<OutletContext>()
+  const [classesList, setClassesList] = useState<any[]>([])
+  const [meetings, setMeetings] = useState<MeetingRecord[]>([])
+
+  useEffect(() => {
+    if (!currentUser) return
+    const unsubClasses = subscribeToClasses(currentUser.role, currentUser.id, (list) => setClassesList(list))
+    const unsubMeetings = subscribeToMeetings((list) => setMeetings(list))
+    return () => {
+      unsubClasses()
+      unsubMeetings()
+    }
+  }, [currentUser])
+
+  const visibleMeetings = useMemo(() => {
+    if (!isStudent) return meetings
+    const classIds = new Set(classesList.map((item) => item.id))
+    return meetings.filter((meeting: any) => !meeting.classId || classIds.has(meeting.classId))
+  }, [classesList, isStudent, meetings])
+
+  return <MeetingHistory meetings={visibleMeetings} />
+}
+
+export function AttendanceView() {
+  const { currentUser, isFaculty } = useOutletContext<OutletContext>()
+  const [meetings, setMeetings] = useState<MeetingRecord[]>([])
+
+  useEffect(() => {
+    const unsub = subscribeToMeetings((list) => setMeetings(list.sort((a, b) => b.date.getTime() - a.date.getTime())))
+    return () => unsub()
+  }, [])
+
+  return (
+    <div className="space-y-6 rounded-3xl border border-white/10 bg-white/5 p-6">
+      <h1 className="flex items-center gap-2 text-2xl font-black text-white">
+        <ClipboardCheck className="h-6 w-6 text-rose-300" /> Attendance
+      </h1>
+
+      {isFaculty ? (
+        <div className="space-y-3">
+          {meetings.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/40 p-8 text-center text-slate-400">No attendance records yet.</div>
+          ) : (
+            meetings.map((meeting) => {
+              const attended = meeting.attendanceReport?.filter((entry) => entry.status === 'Attended').length || 0
+              const total = meeting.attendanceReport?.length || 0
+              return (
+                <div key={meeting.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+                  <div className="font-semibold text-white">{meeting.title}</div>
+                  <div className="mt-1 text-sm text-slate-400">{attended}/{total} attended</div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {meetings.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/40 p-8 text-center text-slate-400">No attendance history yet.</div>
+          ) : (
+            meetings.map((meeting) => {
+              const record = meeting.attendanceReport?.find((entry) => entry.name === currentUser.name)
+              const attended = record ? record.status === 'Attended' : meeting.participants?.includes(currentUser.name)
+              return (
+                <div key={meeting.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold text-white">{meeting.title}</div>
+                    <div className="mt-1 text-sm text-slate-400">{new Date(meeting.date).toLocaleDateString()}</div>
+                  </div>
+                  <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${attended ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300' : 'border-rose-400/20 bg-rose-500/10 text-rose-300'}`}>
+                    {attended ? 'Attended' : 'Absent'}
+                  </span>
+                </div>
+              )
+            })
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function RecordingsView() {
+  const [meetings, setMeetings] = useState<MeetingRecord[]>([])
+
+  useEffect(() => {
+    const unsub = subscribeToMeetings((list) => setMeetings(list.filter((meeting) => Boolean(meeting.recording)).sort((a, b) => b.date.getTime() - a.date.getTime())))
+    return () => unsub()
+  }, [])
+
+  return (
+    <div className="space-y-6 rounded-3xl border border-white/10 bg-white/5 p-6">
+      <h1 className="flex items-center gap-2 text-2xl font-black text-white">
+        <Clapperboard className="h-6 w-6 text-purple-300" /> Recordings
+      </h1>
+
+      {meetings.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/40 p-8 text-center text-slate-400">No recordings available yet.</div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {meetings.map((meeting) => (
+            <div key={meeting.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+              <div className="font-semibold text-white">{meeting.title}</div>
+              <div className="mt-1 text-sm text-slate-400">{meeting.summary || 'Recorded class session'}</div>
+              <a href={meeting.recording!} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-bold text-slate-950">
+                <LinkIcon className="h-4 w-4" />
+                Open recording
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function SettingsPageWrapper() {
+  const navigate = useNavigate()
+  const { isFaculty } = useOutletContext<OutletContext>()
+
+  return (
+    <Suspense fallback={<div className="text-slate-400 text-sm">Loading settings...</div>}>
+      <SettingsPage onBack={() => navigate(isFaculty ? '/faculty/dashboard' : '/student/dashboard')} />
+    </Suspense>
+  )
+}
+
+export function ProfileView() {
+  const { currentUser } = useOutletContext<OutletContext>()
+
+  return (
+    <div className="mx-auto max-w-2xl space-y-6 rounded-3xl border border-white/10 bg-white/5 p-6">
+      <div className="flex items-center gap-4 border-b border-white/10 pb-6">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-cyan-500 to-fuchsia-600 text-2xl font-black text-white">
+          {currentUser.name.charAt(0).toUpperCase()}
+        </div>
+        <div>
+          <h1 className="text-2xl font-black text-white">{currentUser.name}</h1>
+          <p className="text-sm text-slate-400">{currentUser.email}</p>
+        </div>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 text-sm">
+        <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+          <div className="text-slate-500">Role</div>
+          <div className="mt-1 text-white font-semibold">{currentUser.role}</div>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+          <div className="text-slate-500">Student / Employee ID</div>
+          <div className="mt-1 text-white font-semibold">{currentUser.studentId || currentUser.employeeId || 'N/A'}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function NotificationsView() {
+  const { notifications } = useOutletContext<OutletContext>()
+
+  return (
+    <div className="space-y-4 rounded-3xl border border-white/10 bg-white/5 p-6">
+      <h1 className="text-2xl font-black text-white">Notifications</h1>
+      {notifications.length === 0 ? (
+        <p className="text-slate-400">No notifications yet.</p>
+      ) : (
+        <div className="space-y-3">
+          {notifications.map((notification: any) => (
+            <div key={notification.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+              <div className="font-semibold text-white">{notification.title}</div>
+              <div className="mt-1 text-sm text-slate-400">{notification.message}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function AnalyticsView() {
+  const { currentUser } = useOutletContext<OutletContext>()
+  const [classesCount, setClassesCount] = useState(0)
+  const [meetingsCount, setMeetingsCount] = useState(0)
+  const [recordingsCount, setRecordingsCount] = useState(0)
+
+  useEffect(() => {
+    const unsubClasses = currentUser ? subscribeToClasses(currentUser.role, currentUser.id, (list) => setClassesCount(list.length)) : () => {}
+    const unsubMeetings = subscribeToMeetings((list) => {
+      setMeetingsCount(list.length)
+      setRecordingsCount(list.filter((meeting) => Boolean(meeting.recording)).length)
+    })
+
+    return () => {
+      unsubClasses()
+      unsubMeetings()
+    }
+  }, [currentUser])
+
+  return (
+    <div className="space-y-6 rounded-3xl border border-white/10 bg-white/5 p-6">
+      <h1 className="flex items-center gap-2 text-2xl font-black text-white">
+        <HelpCircle className="h-6 w-6 text-rose-300" /> Analytics
+      </h1>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"><div className="text-slate-500">Classes</div><div className="mt-2 text-2xl font-bold text-white">{classesCount}</div></div>
+        <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"><div className="text-slate-500">Meetings</div><div className="mt-2 text-2xl font-bold text-white">{meetingsCount}</div></div>
+        <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"><div className="text-slate-500">Recordings</div><div className="mt-2 text-2xl font-bold text-white">{recordingsCount}</div></div>
+      </div>
+    </div>
+  )
+}
+

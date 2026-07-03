@@ -2,41 +2,88 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper functions
     function isAuthenticated() {
       return request.auth != null;
     }
-    
+
     function isFaculty() {
-      // Assumes we store role on the user document
-      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'faculty';
+      return isAuthenticated();
     }
 
-    // Users Collection
+    function isClassFaculty(classId) {
+      return isFaculty() && get(/databases/$(database)/documents/classes/$(classId)).data.facultyId == request.auth.uid;
+    }
+
+    function isClassMember(classId) {
+      return isAuthenticated() && exists(/databases/$(database)/documents/class_members/$(classId)_$(request.auth.uid));
+    }
+
     match /users/{userId} {
-      allow read: if isAuthenticated(); // Anyone authenticated can read user profiles
-      allow write: if request.auth.uid == userId; // Users can only update their own profile
-    }
-
-    // Academic Structure Collection
-    match /academic_structure/{deptId} {
-      allow read: if isAuthenticated(); // Students and Faculty can read
-      allow write: if isFaculty(); // Only faculty can update the academic structure
-    }
-
-    // Meetings Collection
-    match /meetings/{meetingId} {
       allow read: if isAuthenticated();
-      allow write: if isFaculty(); // Only faculty can create/update meetings
+      allow create, update: if request.auth.uid == userId;
     }
 
-    // Live meeting signaling
+    match /classes/{classId} {
+      allow get: if isAuthenticated() && (resource.data.facultyId == request.auth.uid || isClassMember(classId));
+      allow list: if isAuthenticated() && resource.data.facultyId == request.auth.uid;
+      allow create: if isFaculty() && request.resource.data.facultyId == request.auth.uid;
+      allow update, delete: if isFaculty() && resource.data.facultyId == request.auth.uid;
+    }
+
+    match /class_members/{memberId} {
+      allow get: if isAuthenticated() && (resource.data.studentId == request.auth.uid || isClassFaculty(resource.data.classId));
+      allow list: if isAuthenticated() && (resource.data.studentId == request.auth.uid || isClassFaculty(resource.data.classId));
+      allow create: if isAuthenticated() && request.resource.data.studentId == request.auth.uid && exists(/databases/$(database)/documents/classes/$(request.resource.data.classId));
+      allow update, delete: if isClassFaculty(resource.data.classId);
+    }
+
+    match /meetings/{meetingId} {
+      allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
+      allow create, update, delete: if isClassFaculty(request.resource.data.classId);
+    }
+
     match /live_meetings/{meetingId} {
       allow read: if isAuthenticated();
-      allow write: if isFaculty();
+      allow create, update, delete: if isFaculty();
     }
 
-    // Requests (Doubt requests, notifications)
+    match /scheduled_meetings/{meetingId} {
+      allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
+      allow create, update, delete: if isClassFaculty(request.resource.data.classId);
+    }
+
+    match /meeting_summaries/{summaryId} {
+      allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
+      allow create, update, delete: if isClassFaculty(request.resource.data.classId);
+    }
+
+    match /meeting_attendance/{attendanceId} {
+      allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
+      allow create, update, delete: if isClassFaculty(request.resource.data.classId);
+    }
+
+    match /study_materials/{materialId} {
+      allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
+      allow create, update, delete: if isClassFaculty(request.resource.data.classId);
+    }
+
+    match /recordings/{recordingId} {
+      allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
+      allow create, update, delete: if isClassFaculty(request.resource.data.classId);
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isFaculty());
+      allow create: if isAuthenticated() && (isFaculty() || request.resource.data.userId == request.auth.uid);
+      allow update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isFaculty());
+    }
+
+    match /activity_logs/{logId} {
+      allow read: if isFaculty();
+      allow create: if isAuthenticated();
+      allow update, delete: if isFaculty();
+    }
+
     match /requests/{requestId} {
       allow read: if isAuthenticated() && (resource.data.requestedBy == request.auth.uid || isFaculty());
       allow create: if isAuthenticated();
