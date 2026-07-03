@@ -61,7 +61,8 @@ export default function WaitingRoom({
             whileTap={{ scale: 0.95 }}
             onClick={onAdmitAll}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-500/20 hover:bg-green-500/30 text-green-300 font-medium transition-all text-sm"
-          >
+            aria-label="Admit all participants"
+            >
             <UserPlus className="w-4 h-4" />
             Admit All
           </motion.button>
@@ -111,6 +112,7 @@ export default function WaitingRoom({
                       onClick={() => onAdmit(participant.id)}
                       className="p-2 rounded-lg bg-green-500/20 hover:bg-green-500/30 text-green-300 transition-all"
                       title="Admit"
+                      aria-label={`Admit ${participant.name}`}
                     >
                       <Check className="w-4 h-4" />
                     </motion.button>
@@ -121,6 +123,7 @@ export default function WaitingRoom({
                       onClick={() => onReject(participant.id)}
                       className="p-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 transition-all"
                       title="Reject"
+                      aria-label={`Reject ${participant.name}`}
                     >
                       <X className="w-4 h-4" />
                     </motion.button>

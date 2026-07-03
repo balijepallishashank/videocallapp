@@ -115,6 +115,7 @@ export default function MeetingRoom({
   const screenShareStreamRef = useRef<MediaStream | null>(null)
   const [showToolPanel, setShowToolPanel] = useState<'whiteboard' | 'breakoutRooms' | 'screenRecording' | 'virtualBg' | 'waitingRoom' | null>(null)
   const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: 'info' | 'success' | 'warning' | 'error' }>>([])
+  const [mediaError, setMediaError] = useState<string | null>(null)
   const [showInviteModal, setShowInviteModal] = useState(false)
   const [floatingReactions, setFloatingReactions] = useState<Array<{
     id: string
@@ -138,30 +139,61 @@ export default function MeetingRoom({
   const controlHideTimer = useRef<number | null>(null)
 
   // Initialize camera and microphone
-  useEffect(() => {
-    const initializeMedia = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true
-        })
-        setLocalStream(stream)
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-        }
-      } catch (error) {
-        console.error('Failed to access media devices:', error)
-        setIsVideoOn(false)
-      }
-    }
+  const initializeMedia = async () => {
+    try {
+      setMediaError(null)
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      // Ensure tracks reflect current UI state
+      stream.getAudioTracks().forEach((t) => (t.enabled = !isMuted))
+      stream.getVideoTracks().forEach((t) => (t.enabled = isVideoOn))
 
+      setLocalStream(stream)
+      if (videoRef.current) videoRef.current.srcObject = stream
+      return true
+    } catch (error) {
+      console.error('Failed to access media devices:', error)
+      setIsVideoOn(false)
+
+      let errorMessage = 'Unable to access camera or microphone'
+      const err = error as any
+      if (err && err.name) {
+        if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+          errorMessage = 'Permission denied. Please allow camera/microphone access in your browser.'
+        } else if (err.name === 'NotFoundError' || err.name === 'OverconstrainedError') {
+          errorMessage = 'No camera or microphone found. Check device connection.'
+        } else if (err.name === 'NotReadableError') {
+          errorMessage = 'Camera or microphone appears to be in use by another application.'
+        }
+      }
+
+      setMediaError(errorMessage)
+      const id = `toast-${Date.now()}-${Math.random()}`
+      setToasts((prev) => [...prev, { id, message: errorMessage, type: 'error' }])
+      // Developer fallback on localhost: create a fake MediaStream so UI controls can be tested
+      try {
+        if ((typeof window !== 'undefined' && window.location && window.location.hostname.includes('localhost')) || process.env.NODE_ENV === 'development') {
+          const fake = createDevMediaStream()
+          setLocalStream(fake)
+          if (videoRef.current) videoRef.current.srcObject = fake
+          setToasts((prev) => [...prev, { id: `toast-${Date.now()}-${Math.random()}`, message: 'Using developer fake camera/mic for testing', type: 'info' }])
+          setMediaError(null)
+          return true
+        }
+      } catch (e) {
+        console.warn('Failed to create dev media stream', e)
+      }
+
+      return false
+    }
+  }
+
+  useEffect(() => {
     initializeMedia()
 
     return () => {
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop())
-      }
+      if (localStream) localStream.getTracks().forEach((track) => track.stop())
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Meeting duration timer
@@ -258,6 +290,43 @@ export default function MeetingRoom({
     setSpeakingQueue([])
   }
 
+  // Developer helper: create a fake MediaStream (canvas video + silent audio)
+  const createDevMediaStream = (): MediaStream => {
+    // video via canvas
+    const canvas = document.createElement('canvas')
+    canvas.width = 640
+    canvas.height = 360
+    const ctx = canvas.getContext('2d')!
+    let frame = 0
+    const draw = () => {
+      ctx.fillStyle = '#0f172a'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.fillStyle = '#0ea5a4'
+      ctx.font = '56px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText('Dev Camera', canvas.width / 2, canvas.height / 2)
+      ctx.font = '24px sans-serif'
+      ctx.fillText(`Frame ${frame++}`, canvas.width / 2, canvas.height / 2 + 40)
+      requestAnimationFrame(draw)
+    }
+    draw()
+
+    const videoStream = (canvas as any).captureStream(15)
+
+    // silent audio track
+    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const oscillator = audioCtx.createOscillator()
+    oscillator.frequency.value = 0
+    const dest = audioCtx.createMediaStreamDestination()
+    oscillator.connect(dest)
+    oscillator.start()
+
+    const composed = new MediaStream()
+    videoStream.getVideoTracks().forEach((t: MediaStreamTrack) => composed.addTrack(t))
+    dest.stream.getAudioTracks().forEach((t) => composed.addTrack(t))
+    return composed
+  }
+
   const addToast = (message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     const id = `toast-${Date.now()}-${Math.random()}`
     setToasts(prev => [...prev, { id, message, type }])
@@ -314,8 +383,9 @@ export default function MeetingRoom({
     if (localStream) {
       const videoTrack = localStream.getVideoTracks()[0]
       if (videoTrack) {
-        videoTrack.enabled = !isVideoOn
-        setIsVideoOn(!isVideoOn)
+        const newVideoOn = !isVideoOn
+        videoTrack.enabled = newVideoOn
+        setIsVideoOn(newVideoOn)
       }
     }
   }
@@ -325,8 +395,9 @@ export default function MeetingRoom({
     if (localStream) {
       const audioTrack = localStream.getAudioTracks()[0]
       if (audioTrack) {
-        audioTrack.enabled = isMuted
-        setIsMuted(!isMuted)
+        const newMuted = !isMuted
+        audioTrack.enabled = !newMuted
+        setIsMuted(newMuted)
       }
     }
   }
@@ -577,64 +648,59 @@ export default function MeetingRoom({
               const isInQueue = queuePosition !== -1
               
               return (
-              <div
-                key={participant.id}
-                className={`relative bg-slate-900 rounded-lg overflow-hidden ${
-                  fullscreenParticipant ? 'h-full' :
-                  viewMode === 'speaker' && index === 0 ? 'flex-1' : 
-                  viewMode === 'speaker' && index > 0 ? 'h-24 flex-shrink-0' : ''
-                } group hover:ring-2 hover:ring-blue-400/50 transition-all duration-200 cursor-pointer ${
-                  participant.isHost ? 'ring-1 ring-emerald-400/30' : ''
-                } ${
-                  isInQueue ? 'ring-2 ring-yellow-400/60 animate-pulse' : ''
-                }`}
-                onClick={() => !fullscreenParticipant && setFullscreenParticipant(participant.id)}
-              >
-                {participant.isVideoOn ? (
-                  <div className="w-full h-full relative">
-                    {participant.id === currentUser.id && participant.stream ? (
-                      <video
-                        ref={participant.id === currentUser.id ? videoRef : undefined}
-                        autoPlay
-                        muted
-                        playsInline
-                        className="w-full h-full object-cover scale-x-[-1]"
-                      />
-                    ) : (
-                      <div className="w-full h-full bg-gradient-to-br from-slate-700 via-slate-800 to-slate-900 flex items-center justify-center relative">
-                        <div className={`rounded-full bg-slate-600/80 flex items-center justify-center backdrop-blur-sm border border-slate-500/50 ${
+                <div
+                  className={`relative bg-slate-900 rounded-lg overflow-hidden ${
+                    fullscreenParticipant ? 'h-full' : viewMode === 'speaker' && index === 0 ? 'flex-1' : viewMode === 'speaker' && index > 0 ? 'h-24 flex-shrink-0' : ''
+                  } group hover:ring-2 hover:ring-blue-400/50 transition-all duration-200 cursor-pointer ${
+                    participant.isHost ? 'ring-1 ring-emerald-400/30' : ''
+                  } ${isInQueue ? 'ring-2 ring-yellow-400/60 animate-pulse' : ''}`}
+                  onClick={() => !fullscreenParticipant && setFullscreenParticipant(participant.id)}
+                >
+                  {participant.isVideoOn ? (
+                    <div className="w-full h-full relative">
+                      {participant.id === currentUser.id && participant.stream ? (
+                        <video
+                          ref={participant.id === currentUser.id ? videoRef : undefined}
+                          autoPlay
+                          muted
+                          playsInline
+                          className="w-full h-full object-cover scale-x-[-1]"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-gradient-to-br from-slate-700 via-slate-800 to-slate-900 flex items-center justify-center relative">
+                          <div className={`rounded-full bg-slate-600/80 flex items-center justify-center backdrop-blur-sm border border-slate-500/50 ${
+                            fullscreenParticipant ? 'w-32 h-32' : 'w-16 h-16 md:w-20 md:h-20'
+                          }`}>
+                            <span className={`font-bold text-slate-200 ${
+                              fullscreenParticipant ? 'text-4xl' : 'text-xl md:text-2xl'
+                            }`}>
+                              {participant.name.charAt(0).toUpperCase()}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="w-full h-full bg-slate-800 flex items-center justify-center relative">
+                      <div className="text-center">
+                        <div className={`rounded-full bg-slate-700 flex items-center justify-center mx-auto mb-3 ${
                           fullscreenParticipant ? 'w-32 h-32' : 'w-16 h-16 md:w-20 md:h-20'
                         }`}>
-                          <span className={`font-bold text-slate-200 ${
+                          <span className={`font-bold text-slate-300 ${
                             fullscreenParticipant ? 'text-4xl' : 'text-xl md:text-2xl'
                           }`}>
                             {participant.name.charAt(0).toUpperCase()}
                           </span>
                         </div>
+                        <VideoOff className={`text-slate-400 mx-auto mb-2 ${
+                          fullscreenParticipant ? 'w-8 h-8' : 'w-6 h-6'
+                        }`} />
+                        <span className={`text-slate-400 ${
+                          fullscreenParticipant ? 'text-base' : 'text-sm'
+                        }`}>Camera is off</span>
                       </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="w-full h-full bg-slate-800 flex items-center justify-center relative">
-                    <div className="text-center">
-                      <div className={`rounded-full bg-slate-700 flex items-center justify-center mx-auto mb-3 ${
-                        fullscreenParticipant ? 'w-32 h-32' : 'w-16 h-16 md:w-20 md:h-20'
-                      }`}>
-                        <span className={`font-bold text-slate-300 ${
-                          fullscreenParticipant ? 'text-4xl' : 'text-xl md:text-2xl'
-                        }`}>
-                          {participant.name.charAt(0).toUpperCase()}
-                        </span>
-                      </div>
-                      <VideoOff className={`text-slate-400 mx-auto mb-2 ${
-                        fullscreenParticipant ? 'w-8 h-8' : 'w-6 h-6'
-                      }`} />
-                      <span className={`text-slate-400 ${
-                        fullscreenParticipant ? 'text-base' : 'text-sm'
-                      }`}>Camera is off</span>
                     </div>
-                  </div>
-                )}
+                  )}
 
                 {/* Queue Number Badge */}
                 {isInQueue && (
@@ -700,6 +766,29 @@ export default function MeetingRoom({
                 </div>
               </div>
             )})}
+
+            {mediaError && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/40 p-6">
+                <div className="bg-slate-900/95 text-slate-100 rounded-xl p-6 max-w-md text-center">
+                  <p className="mb-4 font-semibold">{mediaError}</p>
+                  <div className="flex gap-2 justify-center">
+                    <button
+                      onClick={() => initializeMedia()}
+                      className="px-4 py-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/30 text-emerald-200"
+                    >
+                      Retry
+                    </button>
+                    <button
+                      onClick={() => window.open('https://support.google.com/chrome/answer/2693767', '_blank')}
+                      className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white"
+                    >
+                      How to allow access
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-3">If using Windows, also check OS privacy settings: Settings → Privacy & security → Camera / Microphone.</p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

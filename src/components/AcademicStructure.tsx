@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Bell, CalendarDays, CheckCheck, Download, FileText, Users } from 'lucide-react'
+import { lazy, Suspense } from 'react'
 import type {
   AcademicDepartment,
   AcademicFacultyRoot,
   AcademicSection,
   StudentRecord,
 } from './HierarchicalSidebar.tsx'
-import BranchTree from './academic-selector/BranchTree'
-import YearSection from './academic-selector/YearSection'
-import DragDropArea from './academic-selector/DragDropArea'
-import ExcelUploader from './academic-selector/ExcelUploader'
-import AddStudentForm from './academic-selector/AddStudentForm'
+const BranchTree = lazy(() => import('./academic-selector/BranchTree'))
+const YearSection = lazy(() => import('./academic-selector/YearSection'))
+const DragDropArea = lazy(() => import('./academic-selector/DragDropArea'))
+const ExcelUploader = lazy(() => import('./academic-selector/ExcelUploader'))
+const AddStudentForm = lazy(() => import('./academic-selector/AddStudentForm'))
 import type { AcademicStudent, BranchNode, SelectorToast, UploadRow } from './academic-selector/types'
 
 export type { AcademicFacultyRoot, AcademicSection, StudentRecord } from './HierarchicalSidebar.tsx'
@@ -612,18 +613,20 @@ export default function AcademicStructure({
         </aside>
 
         <section className="lg:col-span-6 space-y-4">
-          <YearSection
-            title={title}
-            students={activeStudents}
-            selectedIds={selectedStudentIds}
-            participantIds={participantIds}
-            canManageInvites={isFaculty}
-            visibleCount={visibleCount}
-            onToggleStudent={toggleStudent}
-            onSelectAll={selectAllActiveStudents}
-            onClearAll={clearAllActiveStudents}
-            onLoadMore={() => setVisibleCount((previous) => previous + 30)}
-          />
+          <Suspense fallback={<div className="p-4 text-slate-400">Loading branches…</div>}>
+            <YearSection
+              title={title}
+              students={activeStudents}
+              selectedIds={selectedStudentIds}
+              participantIds={participantIds}
+              canManageInvites={isFaculty}
+              visibleCount={visibleCount}
+              onToggleStudent={toggleStudent}
+              onSelectAll={selectAllActiveStudents}
+              onClearAll={clearAllActiveStudents}
+              onLoadMore={() => setVisibleCount((previous) => previous + 30)}
+            />
+          </Suspense>
         </section>
 
         <aside className="lg:col-span-3 space-y-4">

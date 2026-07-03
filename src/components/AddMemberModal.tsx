@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Mail, Phone as PhoneIcon, User } from 'lucide-react'
+import IconButton from './IconButton'
 import { TeamMember } from './TeamContacts'
 
 interface AddMemberModalProps {
@@ -121,13 +122,9 @@ export default function AddMemberModal({
                 <h2 className="text-2xl font-bold text-white">
                   {isEditing ? 'Edit Member' : 'Add New Member'}
                 </h2>
-                <motion.button
-                  whileHover={{ scale: 1.1 }}
-                  onClick={handleClose}
-                  className="p-2 rounded-lg hover:bg-slate-700/30 text-slate-400 transition-all"
-                >
+                <IconButton onClick={handleClose} ariaLabel="Close add member dialog" className="p-2 text-slate-400">
                   <X className="w-6 h-6" />
-                </motion.button>
+                </IconButton>
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-4">

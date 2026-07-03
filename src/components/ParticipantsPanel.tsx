@@ -74,11 +74,12 @@ export default function ParticipantsPanel({
 
             {/* Remove button overlay for non-self participants */}
             {participant.id !== 'you' && (
-              <motion.div
+              <motion.button
                 initial={false}
                 whileHover={{ scale: 1.05 }}
                 onClick={() => onRemove(participant.id)}
                 className="absolute inset-0 bg-black/70 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all duration-200 flex flex-col items-center justify-center gap-1.5 rounded-xl"
+                aria-label={`Remove ${participant.name}`}
               >
                 <motion.div
                   whileHover={{ scale: 1.2, rotate: 90 }}
@@ -88,7 +89,7 @@ export default function ParticipantsPanel({
                   <X className="w-5 h-5 text-red-300" />
                 </motion.div>
                 <span className="text-xs text-red-300 font-semibold drop-shadow-lg">Remove</span>
-              </motion.div>
+              </motion.button>
             )}
 
             {/* Self indicator badge */}

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X } from 'lucide-react'
+import IconButton from './IconButton'
 
 interface CreateTeamModalProps {
   isOpen: boolean
@@ -107,14 +108,9 @@ export default function CreateTeamModal({
                   <h2 className="text-2xl font-bold text-white mb-1">Create New Workspace</h2>
                   <p className="text-slate-400 text-sm">Set up a new team workspace to collaborate</p>
                 </div>
-                <motion.button
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.9 }}
-                  onClick={handleClose}
-                  className="p-2 rounded-lg hover:bg-slate-700/30 text-slate-400 transition-all"
-                >
+                <IconButton onClick={handleClose} ariaLabel="Close create team dialog" className="p-2 text-slate-400">
                   <X className="w-6 h-6" />
-                </motion.button>
+                </IconButton>
               </div>
 
               {/* Form */}

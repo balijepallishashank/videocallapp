@@ -6,6 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "npm run test:e2e",
+    "test:e2e": "npx playwright test",
+    "test:a11y": "npx playwright test --project=chromium --grep @a11y",
+    "audit:lights": "npx lighthouse http://localhost:5173 --output=json --output-path=reports/lighthouse.json --chrome-flags=\"--headless\"",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
@@ -21,7 +25,9 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.3",
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.60.0",
     "@types/react": "^18.2.37",
     "@types/react-dom": "^18.2.15",
     "@vitejs/plugin-react": "^4.2.0",
@@ -30,6 +36,8 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.26",
     "globals": "^16.5.0",
+    "lighthouse": "^13.3.0",
+    "playwright": "^1.60.0",
     "postcss": "^8.4.31",
     "tailwindcss": "^3.3.6",
     "typescript": "^5.2.2",
