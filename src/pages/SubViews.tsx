@@ -19,6 +19,7 @@ import {
   deleteScheduledMeeting,
   createNotification,
   type LiveMeetingInvite,
+  subscribeToAllRecordings,
 } from '../services/db'
 import { collection, query, where, getDocs } from 'firebase/firestore'
 import MeetingHistory from '../features/meeting/MeetingHistory'
@@ -980,12 +981,31 @@ export function MeetingHistoryView() {
 
 export function AttendanceView() {
   const { currentUser, isFaculty } = useOutletContext<OutletContext>()
+  const [classesList, setClassesList] = useState<any[]>([])
   const [meetings, setMeetings] = useState<MeetingRecord[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const unsub = subscribeToMeetings((list) => setMeetings(list.sort((a, b) => b.date.getTime() - a.date.getTime())))
-    return () => unsub()
-  }, [])
+    if (!currentUser) return
+    setLoading(true)
+    const unsubClasses = subscribeToClasses(currentUser.role, currentUser.id, (list) => {
+      setClassesList(list)
+    })
+    const unsubMeetings = subscribeToMeetings((list) => {
+      setMeetings(list.sort((a, b) => b.date.getTime() - a.date.getTime()))
+      setLoading(false)
+    })
+    return () => {
+      unsubClasses()
+      unsubMeetings()
+    }
+  }, [currentUser])
+
+  const visibleMeetings = useMemo(() => {
+    if (classesList.length === 0) return []
+    const classIds = new Set(classesList.map((item) => item.id))
+    return meetings.filter((meeting: any) => meeting.classId && classIds.has(meeting.classId))
+  }, [classesList, meetings])
 
   return (
     <div className="space-y-6 rounded-3xl border border-white/10 bg-white/5 p-6">
@@ -993,44 +1013,42 @@ export function AttendanceView() {
         <ClipboardCheck className="h-6 w-6 text-rose-300" /> Attendance
       </h1>
 
-      {isFaculty ? (
+      {loading ? (
+        <div className="text-slate-400 text-sm">Loading attendance...</div>
+      ) : visibleMeetings.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/40 p-8 text-center text-slate-400">
+          No attendance records found for your classes.
+        </div>
+      ) : isFaculty ? (
         <div className="space-y-3">
-          {meetings.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/40 p-8 text-center text-slate-400">No attendance records yet.</div>
-          ) : (
-            meetings.map((meeting) => {
-              const attended = meeting.attendanceReport?.filter((entry) => entry.status === 'Attended').length || 0
-              const total = meeting.attendanceReport?.length || 0
-              return (
-                <div key={meeting.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-                  <div className="font-semibold text-white">{meeting.title}</div>
-                  <div className="mt-1 text-sm text-slate-400">{attended}/{total} attended</div>
-                </div>
-              )
-            })
-          )}
+          {visibleMeetings.map((meeting) => {
+            const attended = meeting.attendanceReport?.filter((entry) => entry.status === 'Attended').length || 0
+            const total = meeting.attendanceReport?.length || 0
+            return (
+              <div key={meeting.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+                <div className="font-semibold text-white">{meeting.title}</div>
+                <div className="mt-1 text-sm text-slate-400">{attended}/{total} attended</div>
+              </div>
+            )
+          })}
         </div>
       ) : (
         <div className="space-y-3">
-          {meetings.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/40 p-8 text-center text-slate-400">No attendance history yet.</div>
-          ) : (
-            meetings.map((meeting) => {
-              const record = meeting.attendanceReport?.find((entry) => entry.name === currentUser.name)
-              const attended = record ? record.status === 'Attended' : meeting.participants?.includes(currentUser.name)
-              return (
-                <div key={meeting.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4 flex items-center justify-between gap-3">
-                  <div>
-                    <div className="font-semibold text-white">{meeting.title}</div>
-                    <div className="mt-1 text-sm text-slate-400">{new Date(meeting.date).toLocaleDateString()}</div>
-                  </div>
-                  <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${attended ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300' : 'border-rose-400/20 bg-rose-500/10 text-rose-300'}`}>
-                    {attended ? 'Attended' : 'Absent'}
-                  </span>
+          {visibleMeetings.map((meeting) => {
+            const record = meeting.attendanceReport?.find((entry) => entry.name === currentUser.name)
+            const attended = record ? record.status === 'Attended' : meeting.participants?.includes(currentUser.name)
+            return (
+              <div key={meeting.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4 flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-semibold text-white">{meeting.title}</div>
+                  <div className="mt-1 text-sm text-slate-400">{new Date(meeting.date).toLocaleDateString()}</div>
                 </div>
-              )
-            })
-          )}
+                <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${attended ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300' : 'border-rose-400/20 bg-rose-500/10 text-rose-300'}`}>
+                  {attended ? 'Attended' : 'Absent'}
+                </span>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
@@ -1038,12 +1056,32 @@ export function AttendanceView() {
 }
 
 export function RecordingsView() {
-  const [meetings, setMeetings] = useState<MeetingRecord[]>([])
+  const { currentUser } = useOutletContext<OutletContext>()
+  const [classesList, setClassesList] = useState<any[]>([])
+  const [recordings, setRecordings] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const unsub = subscribeToMeetings((list) => setMeetings(list.filter((meeting) => Boolean(meeting.recording)).sort((a, b) => b.date.getTime() - a.date.getTime())))
+    if (!currentUser) return
+    setLoading(true)
+    const unsub = subscribeToClasses(currentUser.role, currentUser.id, (list) => {
+      setClassesList(list)
+    })
     return () => unsub()
-  }, [])
+  }, [currentUser])
+
+  useEffect(() => {
+    if (classesList.length === 0) {
+      setLoading(false)
+      return
+    }
+    const classIds = classesList.map(c => c.id)
+    const unsub = subscribeToAllRecordings(classIds, (list) => {
+      setRecordings(list)
+      setLoading(false)
+    })
+    return () => unsub()
+  }, [classesList])
 
   return (
     <div className="space-y-6 rounded-3xl border border-white/10 bg-white/5 p-6">
@@ -1051,20 +1089,41 @@ export function RecordingsView() {
         <Clapperboard className="h-6 w-6 text-purple-300" /> Recordings
       </h1>
 
-      {meetings.length === 0 ? (
+      {loading ? (
+        <div className="text-slate-400 text-sm">Loading recordings...</div>
+      ) : recordings.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/40 p-8 text-center text-slate-400">No recordings available yet.</div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {meetings.map((meeting) => (
-            <div key={meeting.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-              <div className="font-semibold text-white">{meeting.title}</div>
-              <div className="mt-1 text-sm text-slate-400">{meeting.summary || 'Recorded class session'}</div>
-              <a href={meeting.recording!} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-bold text-slate-950">
-                <LinkIcon className="h-4 w-4" />
-                Open recording
-              </a>
-            </div>
-          ))}
+          {recordings.map((rec) => {
+            const cls = classesList.find(c => c.id === rec.classId)
+            const canDownload = currentUser.role === 'faculty' || rec.allowDownload
+            return (
+              <div key={rec.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-5 flex flex-col justify-between hover:border-purple-500/30 transition">
+                <div>
+                  <div className="font-semibold text-white text-lg">{rec.recordingName}</div>
+                  <div className="text-xs text-purple-400 font-semibold mt-1">{cls?.name || 'Class Session'}</div>
+                  {rec.duration && (
+                    <div className="text-xs text-slate-500 mt-2">Duration: {rec.duration}</div>
+                  )}
+                  {rec.size && (
+                    <div className="text-xs text-slate-500">Size: {rec.size}</div>
+                  )}
+                </div>
+                <div className="mt-4 flex gap-2">
+                  <a href={rec.recordingUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-purple-500 hover:bg-purple-400 px-4 py-2.5 text-xs font-bold text-slate-950 transition">
+                    <LinkIcon className="h-3.5 w-3.5" />
+                    Open Video
+                  </a>
+                  {canDownload && (
+                    <a href={rec.recordingUrl} download={rec.recordingName} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 px-4 py-2.5 text-xs font-semibold text-slate-300 transition">
+                      Download
+                    </a>
+                  )}
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
@@ -1142,7 +1201,7 @@ export function AnalyticsView() {
     const unsubClasses = currentUser ? subscribeToClasses(currentUser.role, currentUser.id, (list) => setClassesCount(list.length)) : () => {}
     const unsubMeetings = subscribeToMeetings((list) => {
       setMeetingsCount(list.length)
-      setRecordingsCount(list.filter((meeting) => Boolean(meeting.recording)).length)
+      setRecordingsCount(list.filter((meeting) => Boolean(meeting.recording) || (meeting as any).recordingUrl).length)
     })
 
     return () => {
@@ -1151,15 +1210,117 @@ export function AnalyticsView() {
     }
   }, [currentUser])
 
+  // Custom SVG Bar Chart calculation
+  const maxVal = Math.max(classesCount, meetingsCount, recordingsCount, 1)
+  const classHeight = (classesCount / maxVal) * 120
+  const meetingHeight = (meetingsCount / maxVal) * 120
+  const recordingHeight = (recordingsCount / maxVal) * 120
+
   return (
-    <div className="space-y-6 rounded-3xl border border-white/10 bg-white/5 p-6">
-      <h1 className="flex items-center gap-2 text-2xl font-black text-white">
-        <HelpCircle className="h-6 w-6 text-rose-300" /> Analytics
-      </h1>
+    <div className="space-y-8 rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl">
+      <div>
+        <h1 className="flex items-center gap-2 text-2xl font-black text-white">
+          <HelpCircle className="h-6 w-6 text-rose-300" /> Analytics & Reports
+        </h1>
+        <p className="text-slate-400 text-sm mt-1">Real-time statistics and workspace analysis overview.</p>
+      </div>
+
+      {/* Grid counters */}
       <div className="grid gap-4 sm:grid-cols-3">
-        <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"><div className="text-slate-500">Classes</div><div className="mt-2 text-2xl font-bold text-white">{classesCount}</div></div>
-        <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"><div className="text-slate-500">Meetings</div><div className="mt-2 text-2xl font-bold text-white">{meetingsCount}</div></div>
-        <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"><div className="text-slate-500">Recordings</div><div className="mt-2 text-2xl font-bold text-white">{recordingsCount}</div></div>
+        <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-5 hover:border-cyan-500/30 transition">
+          <div className="text-slate-500 text-xs font-semibold uppercase tracking-wider">Total Classes</div>
+          <div className="mt-2 text-3xl font-black text-cyan-400">{classesCount}</div>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-5 hover:border-violet-500/30 transition">
+          <div className="text-slate-500 text-xs font-semibold uppercase tracking-wider">Meetings Hosted</div>
+          <div className="mt-2 text-3xl font-black text-violet-400">{meetingsCount}</div>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-5 hover:border-emerald-500/30 transition">
+          <div className="text-slate-500 text-xs font-semibold uppercase tracking-wider">Cloud Recordings</div>
+          <div className="mt-2 text-3xl font-black text-emerald-400">{recordingsCount}</div>
+        </div>
+      </div>
+
+      {/* High-quality SVG Chart Component */}
+      <div className="grid md:grid-cols-2 gap-6 pt-4">
+        {/* Engagement Chart */}
+        <div className="rounded-2xl border border-white/10 bg-slate-950/30 p-5">
+          <h3 className="text-white font-bold text-sm mb-4">Workspace Engagement Distribution</h3>
+          <div className="flex items-center justify-center p-4">
+            <svg width="280" height="180" className="overflow-visible">
+              {/* Grid Lines */}
+              <line x1="40" y1="20" x2="260" y2="20" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
+              <line x1="40" y1="60" x2="260" y2="60" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
+              <line x1="40" y1="100" x2="260" y2="100" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
+              <line x1="40" y1="140" x2="260" y2="140" stroke="rgba(255,255,255,0.1)" strokeWidth="1" />
+              
+              {/* Bar 1 (Classes) */}
+              <rect x="70" y={140 - classHeight} width="30" height={classHeight} fill="url(#cyan-grad)" rx="4" className="transition-all duration-500" />
+              {/* Bar 2 (Meetings) */}
+              <rect x="135" y={140 - meetingHeight} width="30" height={meetingHeight} fill="url(#violet-grad)" rx="4" className="transition-all duration-500" />
+              {/* Bar 3 (Recordings) */}
+              <rect x="200" y={140 - recordingHeight} width="30" height={recordingHeight} fill="url(#emerald-grad)" rx="4" className="transition-all duration-500" />
+
+              {/* Axis Labels */}
+              <text x="85" y="160" fill="#94a3b8" fontSize="10" fontWeight="bold" textAnchor="middle">Classes</text>
+              <text x="150" y="160" fill="#94a3b8" fontSize="10" fontWeight="bold" textAnchor="middle">Meetings</text>
+              <text x="215" y="160" fill="#94a3b8" fontSize="10" fontWeight="bold" textAnchor="middle">Videos</text>
+
+              {/* Data Values */}
+              <text x="85" y={130 - classHeight} fill="#22d3ee" fontSize="11" fontWeight="extrabold" textAnchor="middle">{classesCount}</text>
+              <text x="150" y={130 - meetingHeight} fill="#a78bfa" fontSize="11" fontWeight="extrabold" textAnchor="middle">{meetingsCount}</text>
+              <text x="215" y={130 - recordingHeight} fill="#34d399" fontSize="11" fontWeight="extrabold" textAnchor="middle">{recordingsCount}</text>
+
+              {/* Gradients */}
+              <defs>
+                <linearGradient id="cyan-grad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#22d3ee" />
+                  <stop offset="100%" stopColor="#0891b2" stopOpacity="0.2" />
+                </linearGradient>
+                <linearGradient id="violet-grad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#a78bfa" />
+                  <stop offset="100%" stopColor="#7c3aed" stopOpacity="0.2" />
+                </linearGradient>
+                <linearGradient id="emerald-grad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#34d399" />
+                  <stop offset="100%" stopColor="#059669" stopOpacity="0.2" />
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+        </div>
+
+        {/* Engagement Trend */}
+        <div className="rounded-2xl border border-white/10 bg-slate-950/30 p-5 flex flex-col justify-between">
+          <div>
+            <h3 className="text-white font-bold text-sm">Monthly Activity Engagement Rate</h3>
+            <p className="text-xs text-slate-500 mt-1">Aggregate workspace student activity trend (simulated).</p>
+          </div>
+          <div className="flex items-center justify-center p-2">
+            <svg width="280" height="100" className="overflow-visible">
+              <path
+                d="M 20,80 Q 70,30 120,60 T 220,20"
+                fill="none"
+                stroke="url(#trend-grad)"
+                strokeWidth="3"
+                strokeLinecap="round"
+              />
+              <circle cx="220" cy="20" r="4" fill="#22d3ee" />
+              <text x="220" y="10" fill="#22d3ee" fontSize="9" fontWeight="bold" textAnchor="middle">Peak (92%)</text>
+              <linearGradient id="trend-grad" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor="#a78bfa" />
+                <stop offset="50%" stopColor="#3b82f6" />
+                <stop offset="100%" stopColor="#22d3ee" />
+              </linearGradient>
+            </svg>
+          </div>
+          <div className="flex justify-between text-[10px] text-slate-500 font-semibold px-2">
+            <span>Oct</span>
+            <span>Nov</span>
+            <span>Dec</span>
+            <span>Jan</span>
+          </div>
+        </div>
       </div>
     </div>
   )

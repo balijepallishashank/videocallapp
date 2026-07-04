@@ -195,11 +195,21 @@ export default function MeetingHistory({ meetings, onPlayRecording }: MeetingHis
                   <div className="flex flex-wrap gap-3 text-xs text-slate-400">
                     <span className="flex items-center gap-1">
                       <Calendar className="w-3 h-3" />
-                      {format(meeting.date, 'MMM dd, yyyy')}
+                      {(() => {
+                        try {
+                          const d = meeting.date instanceof Date ? meeting.date : new Date(meeting.date)
+                          return isNaN(d.getTime()) ? 'N/A' : format(d, 'MMM dd, yyyy')
+                        } catch { return 'N/A' }
+                      })()}
                     </span>
                     <span className="flex items-center gap-1">
                       <Clock className="w-3 h-3" />
-                      {format(meeting.date, 'hh:mm a')}
+                      {(() => {
+                        try {
+                          const d = meeting.date instanceof Date ? meeting.date : new Date(meeting.date)
+                          return isNaN(d.getTime()) ? 'N/A' : format(d, 'hh:mm a')
+                        } catch { return 'N/A' }
+                      })()}
                     </span>
                     <span className="flex items-center gap-1">
                       <TrendingUp className="w-3 h-3" />

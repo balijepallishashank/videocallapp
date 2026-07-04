@@ -4,7 +4,7 @@ import {
   Video, VideoOff, Mic, MicOff, PhoneOff, Users, MessageSquare,
   Settings, Share2, Circle, MoreVertical, Maximize, Minimize,
   UserPlus, Shield, Hand, Clock, Pencil, Film, Layers,
-  LayoutGrid, Bell, X, Lock, Unlock, Info, UserX
+  LayoutGrid, Bell, X, Lock, Unlock, Info, UserX, FolderOpen
 } from 'lucide-react'
 import Whiteboard from '../features/meeting/Whiteboard'
 import BreakoutRooms from '../features/meeting/BreakoutRooms'
@@ -14,6 +14,8 @@ import FloatingReactions from '../features/meeting/FloatingReactions'
 import MeetingInvite from '../features/meeting/MeetingInvite'
 import WaitingRoom, { type WaitingParticipant } from '../features/meeting/WaitingRoom'
 import AgoraVideoTile from '../components/ui/AgoraVideoTile'
+import ScreenRecording from '../features/meeting/ScreenRecording'
+import FileSharing, { type SharedFile } from '../features/meeting/FileSharing'
 import {
   joinChannel,
   leaveChannel,
@@ -25,7 +27,13 @@ import {
 } from '../services/video'
 import {
   sendChatMessage,
-  subscribeToChatMessages
+  subscribeToChatMessages,
+  recordStudentJoin,
+  recordStudentLeave,
+  subscribeToSharedFiles,
+  addSharedFile,
+  deleteSharedFile,
+  uploadFileToCloudinary,
 } from '../services/db'
 
 interface MeetingParticipant {
@@ -47,6 +55,8 @@ interface SelectedStudent {
 
 interface MeetingRoomProps {
   meetingId: string
+  meetingSessionId?: string
+  meetingStartedAt?: Date | null
   meetingTitle: string
   participants?: MeetingParticipant[]
   selectedStudents: SelectedStudent[]
@@ -63,6 +73,8 @@ interface MeetingRoomProps {
 
 export default function MeetingRoom({
   meetingId,
+  meetingSessionId = '',
+  meetingStartedAt = null,
   meetingTitle,
   participants = [],
   selectedStudents = [],
@@ -77,7 +89,7 @@ export default function MeetingRoom({
   const [isLocked, setIsLocked] = useState(false)
 
   // Drawer & Panel state
-  const [activeDrawer, setActiveDrawer] = useState<'chat' | 'participants' | 'virtualBg' | 'breakoutRooms' | 'waitingRoom' | 'settings' | 'speakingQueue' | null>(null)
+  const [activeDrawer, setActiveDrawer] = useState<'chat' | 'participants' | 'virtualBg' | 'breakoutRooms' | 'waitingRoom' | 'settings' | 'speakingQueue' | 'files' | null>(null)
   const [showWhiteboard, setShowWhiteboard] = useState(false)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [showInviteModal, setShowInviteModal] = useState(false)
@@ -92,6 +104,102 @@ export default function MeetingRoom({
   const [agoraAudioTrack, setAgoraAudioTrack] = useState<IMicrophoneAudioTrack | null>(null)
   const agoraVideoTrackRef = useRef<ICameraVideoTrack | null>(null)
   const agoraAudioTrackRef = useRef<IMicrophoneAudioTrack | null>(null)
+
+  // Device lists & selection
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
+  const [selectedVideoId, setSelectedVideoId] = useState<string>('')
+  const [selectedAudioId, setSelectedAudioId] = useState<string>('')
+
+  // Shared Files state
+  const [sharedFiles, setSharedFiles] = useState<SharedFile[]>([])
+
+  // Load devices and listen for changes
+  useEffect(() => {
+    async function getDevices() {
+      try {
+        const list = await navigator.mediaDevices.enumerateDevices()
+        const video = list.filter(d => d.kind === 'videoinput')
+        const audio = list.filter(d => d.kind === 'audioinput')
+        setVideoDevices(video)
+        setAudioDevices(audio)
+        if (video.length > 0 && !selectedVideoId) setSelectedVideoId(video[0].deviceId)
+        if (audio.length > 0 && !selectedAudioId) setSelectedAudioId(audio[0].deviceId)
+      } catch (err) {
+        console.error('Failed to list media devices:', err)
+      }
+    }
+    getDevices()
+    navigator.mediaDevices.addEventListener('devicechange', getDevices)
+    return () => navigator.mediaDevices.removeEventListener('devicechange', getDevices)
+  }, [activeDrawer])
+
+  // Subscribe to files shared in this meeting
+  useEffect(() => {
+    if (!meetingId) return
+    const unsubscribe = subscribeToSharedFiles(meetingId, (files) => {
+      setSharedFiles(files)
+    })
+    return () => unsubscribe()
+  }, [meetingId])
+
+  const changeVideoDevice = async (deviceId: string) => {
+    setSelectedVideoId(deviceId)
+    if (agoraVideoTrack) {
+      try {
+        await agoraVideoTrack.setDevice(deviceId)
+        const id = `toast-${Date.now()}-${Math.random()}`
+        setToasts((prev) => [...prev, { id, message: 'Camera switched successfully', type: 'success' }])
+      } catch (err) {
+        console.error('Failed to change camera device:', err)
+        const id = `toast-${Date.now()}-${Math.random()}`
+        setToasts((prev) => [...prev, { id, message: 'Failed to switch camera', type: 'error' }])
+      }
+    }
+  }
+
+  const changeAudioDevice = async (deviceId: string) => {
+    setSelectedAudioId(deviceId)
+    if (agoraAudioTrack) {
+      try {
+        await agoraAudioTrack.setDevice(deviceId)
+        const id = `toast-${Date.now()}-${Math.random()}`
+        setToasts((prev) => [...prev, { id, message: 'Microphone switched successfully', type: 'success' }])
+      } catch (err) {
+        console.error('Failed to change microphone device:', err)
+        const id = `toast-${Date.now()}-${Math.random()}`
+        setToasts((prev) => [...prev, { id, message: 'Failed to switch microphone', type: 'error' }])
+      }
+    }
+  }
+
+  const handleFileUpload = async (file: File) => {
+    try {
+      const id = `toast-${Date.now()}-${Math.random()}`
+      setToasts((prev) => [...prev, { id, message: 'Uploading file to Cloudinary...', type: 'info' }])
+      
+      const fileUrl = await uploadFileToCloudinary(file)
+      await addSharedFile(meetingId, {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        url: fileUrl,
+        uploadedBy: currentUser.name,
+      })
+    } catch (err) {
+      console.error('File upload failed:', err)
+      const id = `toast-${Date.now()}-${Math.random()}`
+      setToasts((prev) => [...prev, { id, message: 'Failed to upload file', type: 'error' }])
+    }
+  }
+
+  const handleFileDelete = async (fileId: string) => {
+    try {
+      await deleteSharedFile(meetingId, fileId)
+    } catch (err) {
+      console.error('File delete failed:', err)
+    }
+  }
 
   // Sync refs with state so the cleanup function can access the latest tracks without being re-triggered
   useEffect(() => { agoraVideoTrackRef.current = agoraVideoTrack }, [agoraVideoTrack])
@@ -123,17 +231,7 @@ export default function MeetingRoom({
     id: string; emoji: string; x: number; y: number; variant?: 'burst' | 'spiral' | 'float' | 'bounce'
   }>>([])
 
-  const [waitingParticipants, setWaitingParticipants] = useState<WaitingParticipant[]>(() =>
-    currentUser.role === 'faculty'
-      ? selectedStudents.slice(0, Math.min(2, selectedStudents.length)).map((student, index) => ({
-          id: `waiting-${student.id}`,
-          name: student.name,
-          email: student.email,
-          avatar: student.name.charAt(0).toUpperCase(),
-          joinedAt: new Date(Date.now() - (index + 1) * 60000),
-        }))
-      : [],
-  )
+  const [waitingParticipants, setWaitingParticipants] = useState<WaitingParticipant[]>([])
 
   const [virtualBg, setVirtualBg] = useState<{ id: string; blur?: number; url?: string }>({ id: 'none' })
   const [controlsVisible, setControlsVisible] = useState(true)
@@ -272,6 +370,9 @@ export default function MeetingRoom({
     joinChannel(meetingId, currentUser.id).then(({ localVideoTrack, localAudioTrack }) => {
       if (localVideoTrack) setAgoraVideoTrack(localVideoTrack)
       if (localAudioTrack) setAgoraAudioTrack(localAudioTrack)
+    }).catch((err) => {
+      console.error('[Agora] Failed to join channel:', err)
+      addToast('Failed to connect to video server. Running in mock/offline mode.', 'warning')
     })
 
     return () => {
@@ -279,6 +380,38 @@ export default function MeetingRoom({
       agoraJoined.current = false
     }
   }, [meetingId, currentUser.id])
+
+  const studentJoinTimesRef = useRef<Record<string, number>>({})
+
+  // Faculty Attendance Tracker
+  useEffect(() => {
+    if (currentUser.role !== 'faculty' || !meetingSessionId) return;
+
+    remoteParticipants.forEach((p) => {
+      const uidStr = String(p.uid);
+      if (!studentJoinTimesRef.current[uidStr]) {
+        studentJoinTimesRef.current[uidStr] = Date.now();
+        recordStudentJoin(meetingSessionId, uidStr, meetingStartedAt || new Date()).catch((err) => {
+          console.error('[Faculty Tracker] Failed to record student join:', err);
+        });
+      }
+    });
+
+    // Clean up any student who is no longer in remoteParticipants
+    Object.keys(studentJoinTimesRef.current).forEach((uidStr) => {
+      const isStillPresent = remoteParticipants.some((p) => String(p.uid) === uidStr);
+      if (!isStillPresent) {
+        const jt = studentJoinTimesRef.current[uidStr];
+        if (jt) {
+          const durSec = Math.round((Date.now() - jt) / 1000);
+          recordStudentLeave(meetingSessionId, uidStr, durSec).catch((err) => {
+            console.error('[Faculty Tracker] Failed to record student leave:', err);
+          });
+        }
+        delete studentJoinTimesRef.current[uidStr];
+      }
+    });
+  }, [remoteParticipants, currentUser.role, meetingSessionId, meetingStartedAt]);
 
   // Meeting duration timer
   useEffect(() => {
@@ -1129,19 +1262,55 @@ export default function MeetingRoom({
                     <div className="space-y-3">
                       <div>
                         <label className="block text-xs text-slate-400 font-medium mb-1.5">Microphone Input</label>
-                        <select className="w-full bg-slate-950 border border-white/10 rounded-lg p-2 text-xs outline-none">
-                          <option>Default microphone (System Default)</option>
-                          <option>Built-in Input Device</option>
+                        <select
+                          value={selectedAudioId}
+                          onChange={(e) => changeAudioDevice(e.target.value)}
+                          className="w-full bg-slate-950 border border-white/10 rounded-lg p-2 text-xs text-white outline-none"
+                        >
+                          {audioDevices.map((d) => (
+                            <option key={d.deviceId} value={d.deviceId}>{d.label || `Microphone ${d.deviceId.slice(0, 5)}`}</option>
+                          ))}
+                          {audioDevices.length === 0 && <option>No microphone found</option>}
                         </select>
                       </div>
                       <div>
                         <label className="block text-xs text-slate-400 font-medium mb-1.5">Camera Source</label>
-                        <select className="w-full bg-slate-950 border border-white/10 rounded-lg p-2 text-xs outline-none">
-                          <option>Default High Definition Camera</option>
-                          <option>Virtual Camera (OBS/Dev)</option>
+                        <select
+                          value={selectedVideoId}
+                          onChange={(e) => changeVideoDevice(e.target.value)}
+                          className="w-full bg-slate-950 border border-white/10 rounded-lg p-2 text-xs text-white outline-none"
+                        >
+                          {videoDevices.map((d) => (
+                            <option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${d.deviceId.slice(0, 5)}`}</option>
+                          ))}
+                          {videoDevices.length === 0 && <option>No camera found</option>}
                         </select>
                       </div>
                     </div>
+
+                    {/* Local screen recorder */}
+                    {currentUser.role === 'faculty' && (
+                      <div className="border-t border-white/5 pt-4">
+                        <ScreenRecording
+                          videoStream={localStream}
+                          onToast={addToast}
+                          classId={meetingId}
+                          meetingId={meetingSessionId || meetingId}
+                          facultyId={currentUser.id}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeDrawer === 'files' && (
+                  <div className="p-3">
+                    <FileSharing
+                      files={sharedFiles}
+                      onUpload={handleFileUpload}
+                      onDelete={handleFileDelete}
+                      onToast={addToast}
+                    />
                   </div>
                 )}
               </div>
@@ -1315,6 +1484,15 @@ export default function MeetingRoom({
                   >
                     <Settings className="w-4 h-4 text-slate-400" />
                     <span>Device Settings</span>
+                  </button>
+
+                  {/* File Sharing */}
+                  <button
+                    onClick={() => { setActiveDrawer('files'); setShowMoreMenu(false) }}
+                    className="w-full flex items-center gap-3 px-3.5 py-2 hover:bg-white/5 rounded-xl text-xs text-slate-300 hover:text-white transition-colors"
+                  >
+                    <FolderOpen className="w-4 h-4 text-emerald-400" />
+                    <span>File Sharing</span>
                   </button>
 
                   {/* Fullscreen */}

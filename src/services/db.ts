@@ -8,7 +8,8 @@ import {
   onSnapshot,
   query,
   where,
-  getDocs
+  getDocs,
+  writeBatch
 } from 'firebase/firestore';
 export { db } from '../config/firebase';
 import { db, auth } from '../config/firebase';
@@ -35,7 +36,9 @@ export const parseFirestoreDate = (value: any): Date => {
 // USERS & PRESENCE
 // ========================
 
-export const saveUserProfile = async (userId: string, profile: Omit<UserProfile, 'id'>) => {
+export type UserProfileUpdate = Partial<UserProfile> & Record<string, unknown>;
+
+export const saveUserProfile = async (userId: string, profile: UserProfileUpdate) => {
   const userRef = doc(db, 'users', userId);
   await setDoc(userRef, { ...profile, id: userId }, { merge: true });
 };
@@ -273,21 +276,122 @@ export interface LiveMeetingInvite {
   section?: string;
   subject?: string;
   meetingCode?: string;
+  meetingSessionId?: string;
 }
 
 export const startLiveMeeting = async (channelName: string, details: Omit<LiveMeetingInvite, 'startedAt'>) => {
   await assertFacultyRole();
   const docRef = doc(db, 'live_meetings', channelName);
+  const startedAt = new Date().toISOString();
+  const meetingSessionId = (details as any).meetingSessionId || `meeting-${Date.now()}`;
+  
   await setDoc(docRef, {
     ...details,
-    startedAt: new Date().toISOString(),
+    meetingSessionId,
+    startedAt,
   });
+
+  // Initialize attendance as 'Absent' for all enrolled students
+  const classId = details.classId || channelName;
+  const membersSnap = await getDocs(query(collection(db, 'class_members'), where('classId', '==', classId)));
+  const batch = writeBatch(db);
+  
+  membersSnap.docs.forEach((memberDoc) => {
+    const member = memberDoc.data();
+    const studentId = member.studentId || member.id;
+    const attendanceId = `${meetingSessionId}_${studentId}`;
+    const attendanceRef = doc(db, 'meeting_attendance', attendanceId);
+    batch.set(attendanceRef, {
+      attendanceId,
+      classId,
+      meetingId: meetingSessionId,
+      studentId,
+      studentName: member.studentName || member.name || 'Student',
+      facultyId: details.facultyId || '',
+      joinTime: null,
+      leaveTime: null,
+      duration: 0,
+      status: 'Absent',
+      createdAt: startedAt,
+      updatedAt: startedAt,
+    });
+  });
+  await batch.commit();
 };
 
 export const endLiveMeeting = async (channelName: string) => {
   await assertFacultyRole();
   const docRef = doc(db, 'live_meetings', channelName);
-  await deleteDoc(docRef);
+  const snap = await getDoc(docRef);
+  
+  if (snap.exists()) {
+    const data = snap.data();
+    const meetingSessionId = data.meetingSessionId || `meeting-${channelName}`;
+    const startedAt = new Date(data.startedAt);
+    const duration = Math.round((Date.now() - startedAt.getTime()) / 1000);
+    const facultyId = data.facultyId || '';
+    const classId = data.classId || channelName;
+
+    // 1. Fetch current attendance records for this session
+    const attendanceQuery = query(
+      collection(db, 'meeting_attendance'),
+      where('meetingId', '==', meetingSessionId)
+    );
+    const attendanceSnap = await getDocs(attendanceQuery);
+    const batch = writeBatch(db);
+    const endTimeStr = new Date().toISOString();
+
+    // 2. Update active students who haven't left
+    attendanceSnap.docs.forEach((attDoc) => {
+      const attData = attDoc.data();
+      if (attData.joinTime && !attData.leaveTime) {
+        const studentJoinTime = new Date(attData.joinTime);
+        const sessionSec = Math.max(0, Math.round((Date.now() - studentJoinTime.getTime()) / 1000));
+        batch.update(attDoc.ref, {
+          leaveTime: endTimeStr,
+          duration: (attData.duration || 0) + sessionSec,
+          updatedAt: endTimeStr,
+        });
+      }
+    });
+
+    // 3. Create the completed meeting record
+    const attendanceReport = attendanceSnap.docs.map((attDoc) => {
+      const attData = attDoc.data();
+      const attended = attData.joinTime || attData.status !== 'Absent';
+      return {
+        name: attData.studentName || 'Student',
+        status: attended ? ('Attended' as const) : ('Absent' as const),
+      };
+    });
+
+    const participantsList = attendanceSnap.docs
+      .filter((attDoc) => attDoc.data().joinTime)
+      .map((attDoc) => attDoc.data().studentName || 'Student');
+
+    const meetingRecordRef = doc(db, 'meetings', meetingSessionId);
+    batch.set(meetingRecordRef, {
+      id: meetingSessionId,
+      classId,
+      meetingId: meetingSessionId,
+      title: data.title || 'Live Session',
+      date: data.startedAt,
+      duration,
+      participants: participantsList,
+      attendanceReport,
+      recordingUrl: '',
+      recording: '',
+      createdAt: endTimeStr,
+      facultyId,
+    });
+
+    // 4. Delete the live meeting document
+    batch.delete(docRef);
+
+    await batch.commit();
+  } else {
+    await deleteDoc(docRef);
+  }
 };
 
 export const subscribeToLiveMeetings = (callback: (invites: LiveMeetingInvite[]) => void, onError?: (error: any) => void) => {
@@ -306,6 +410,7 @@ export const subscribeToLiveMeetings = (callback: (invites: LiveMeetingInvite[])
           classId: data.classId,
           facultyId: data.facultyId,
           subject: data.subject,
+          meetingSessionId: data.meetingSessionId,
         } as LiveMeetingInvite;
       });
       callback(list);
@@ -406,25 +511,48 @@ export interface MeetingSummary {
   id: string;
   classId: string;
   meetingId: string;
+  facultyId: string;
   title: string;
-  summary: string;
+  summary?: string;
+  date: string | Date;
+  duration?: number;
   topicsCovered?: string[];
   homework?: string;
   announcements?: string;
-  recordingLink?: string;
-  createdAt: Date;
-  updatedAt: Date;
+  notes?: string;
+  recordingUrl?: string;
+  createdAt: string | Date;
+  updatedAt: string | Date;
 }
 
 export interface MeetingAttendance {
   id: string;
+  attendanceId: string;
   classId: string;
   meetingId: string;
   studentId: string;
   studentName: string;
+  facultyId: string;
+  joinTime: string | null;
+  leaveTime: string | null;
+  duration: number; // in seconds
   status: 'Present' | 'Absent' | 'Late';
-  markedBy?: string;
-  markedAt: Date;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+  deviceTime?: string;
+}
+
+export interface RecordingRecord {
+  id: string;
+  meetingId: string;
+  classId: string;
+  facultyId: string;
+  recordingUrl: string;
+  recordingName: string;
+  duration: string;
+  size: string;
+  allowDownload?: boolean;
+  createdAt: string;
 }
 
 export const createScheduledMeeting = async (meeting: Omit<ScheduledMeeting, 'id' | 'createdAt' | 'updatedAt'>) => {
@@ -441,7 +569,7 @@ export const createScheduledMeeting = async (meeting: Omit<ScheduledMeeting, 'id
 
 export const saveMeetingSummary = async (summary: Omit<MeetingSummary, 'id' | 'createdAt' | 'updatedAt'>) => {
   await assertFacultyRole();
-  const docRef = doc(collection(db, 'meeting_summaries'));
+  const docRef = doc(db, 'meeting_summaries', summary.meetingId);
   await setDoc(docRef, {
     ...summary,
     id: docRef.id,
@@ -451,15 +579,106 @@ export const saveMeetingSummary = async (summary: Omit<MeetingSummary, 'id' | 'c
   return docRef.id;
 };
 
-export const saveMeetingAttendance = async (attendance: Omit<MeetingAttendance, 'id' | 'markedAt'>) => {
+export const updateMeetingSummary = async (summaryId: string, data: Partial<MeetingSummary>) => {
+  await assertFacultyRole();
+  const docRef = doc(db, 'meeting_summaries', summaryId);
+  await setDoc(docRef, {
+    ...data,
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
+};
+
+export const deleteMeetingSummary = async (summaryId: string) => {
+  await assertFacultyRole();
+  await deleteDoc(doc(db, 'meeting_summaries', summaryId));
+};
+
+export const saveMeetingAttendance = async (attendance: Omit<MeetingAttendance, 'id' | 'markedAt' | 'attendanceId'>) => {
   await assertFacultyRole();
   const docRef = doc(collection(db, 'meeting_attendance'));
   await setDoc(docRef, {
     ...attendance,
     id: docRef.id,
-    markedAt: new Date().toISOString(),
+    attendanceId: docRef.id,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   });
   return docRef.id;
+};
+
+export const recordStudentJoin = async (
+  meetingSessionId: string,
+  studentId: string,
+  startedAtIso: string | Date
+) => {
+  await assertFacultyRole();
+  const attendanceId = `${meetingSessionId}_${studentId}`;
+  const docRef = doc(db, 'meeting_attendance', attendanceId);
+  const snap = await getDoc(docRef);
+  if (snap.exists()) {
+    const data = snap.data();
+    if (data.status === 'Absent') {
+      const now = new Date();
+      const startedAt = typeof startedAtIso === 'string' ? new Date(startedAtIso) : startedAtIso;
+      const gracePeriodMs = 10 * 60 * 1000; // 10 minutes
+      const isLate = (now.getTime() - startedAt.getTime()) > gracePeriodMs;
+      
+      await setDoc(docRef, {
+        status: isLate ? 'Late' : 'Present',
+        joinTime: now.toISOString(),
+        deviceTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        updatedAt: now.toISOString(),
+      }, { merge: true });
+    }
+  }
+};
+
+export const recordStudentLeave = async (
+  meetingSessionId: string,
+  studentId: string,
+  sessionDurationSec: number
+) => {
+  await assertFacultyRole();
+  const attendanceId = `${meetingSessionId}_${studentId}`;
+  const docRef = doc(db, 'meeting_attendance', attendanceId);
+  const snap = await getDoc(docRef);
+  if (snap.exists()) {
+    const data = snap.data();
+    const newDuration = (data.duration || 0) + sessionDurationSec;
+    await setDoc(docRef, {
+      leaveTime: new Date().toISOString(),
+      duration: newDuration,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  }
+};
+
+export const saveRecording = async (recording: Omit<RecordingRecord, 'id' | 'createdAt'>) => {
+  await assertFacultyRole();
+  const docRef = doc(collection(db, 'recordings'));
+  await setDoc(docRef, {
+    ...recording,
+    id: docRef.id,
+    createdAt: new Date().toISOString(),
+  });
+  return docRef.id;
+};
+
+export const deleteRecording = async (recordingId: string) => {
+  await assertFacultyRole();
+  await deleteDoc(doc(db, 'recordings', recordingId));
+};
+
+export const renameRecording = async (recordingId: string, newName: string) => {
+  await assertFacultyRole();
+  const docRef = doc(db, 'recordings', recordingId);
+  await setDoc(docRef, { recordingName: newName }, { merge: true });
+};
+
+export const toggleRecordingDownloadPermission = async (recordingId: string, allowDownload: boolean) => {
+  await assertFacultyRole();
+  const docRef = doc(db, 'recordings', recordingId);
+  await setDoc(docRef, { allowDownload }, { merge: true });
 };
 
 export const subscribeToMeetingSummaries = (classId: string, callback: (summaries: MeetingSummary[]) => void, onError?: (error: any) => void) => {
@@ -493,14 +712,57 @@ export const subscribeToMeetingAttendance = (classId: string, callback: (attenda
         const data = doc.data();
         return {
           id: doc.id,
-          ...data,
-          markedAt: parseFirestoreDate(data.markedAt),
+          attendanceId: data.attendanceId || doc.id,
+          classId: data.classId || '',
+          meetingId: data.meetingId || '',
+          studentId: data.studentId || '',
+          studentName: data.studentName || '',
+          facultyId: data.facultyId || '',
+          joinTime: data.joinTime || null,
+          leaveTime: data.leaveTime || null,
+          duration: data.duration || 0,
+          status: data.status || 'Absent',
+          createdAt: parseFirestoreDate(data.createdAt || data.markedAt || new Date()),
+          updatedAt: parseFirestoreDate(data.updatedAt || data.markedAt || new Date()),
+          deviceTime: data.deviceTime || '',
         } as MeetingAttendance;
       }));
     },
     error: (err) => {
       if (onError) onError(err);
       else console.error('Firestore subscribeToMeetingAttendance error:', err);
+    }
+  });
+};
+
+export const subscribeToStudentAttendance = (studentId: string, callback: (attendance: MeetingAttendance[]) => void, onError?: (error: any) => void) => {
+  if (!studentId) return () => {};
+  const q = query(collection(db, 'meeting_attendance'), where('studentId', '==', studentId));
+  return onSnapshot(q, {
+    next: (snapshot) => {
+      callback(snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          attendanceId: data.attendanceId || doc.id,
+          classId: data.classId || '',
+          meetingId: data.meetingId || '',
+          studentId: data.studentId || '',
+          studentName: data.studentName || '',
+          facultyId: data.facultyId || '',
+          joinTime: data.joinTime || null,
+          leaveTime: data.leaveTime || null,
+          duration: data.duration || 0,
+          status: data.status || 'Absent',
+          createdAt: parseFirestoreDate(data.createdAt || data.markedAt || new Date()),
+          updatedAt: parseFirestoreDate(data.updatedAt || data.markedAt || new Date()),
+          deviceTime: data.deviceTime || '',
+        } as MeetingAttendance;
+      }));
+    },
+    error: (err) => {
+      if (onError) onError(err);
+      else console.error('Firestore subscribeToStudentAttendance error:', err);
     }
   });
 };
@@ -681,8 +943,8 @@ export const deleteNotification = async (notificationId: string) => {
 
 export const subscribeToNotifications = (userId: string, callback: (notifications: AppNotification[]) => void, onError?: (error: any) => void) => {
   if (!userId) return () => {};
-  const notificationsRef = collection(db, 'notifications');
-  return onSnapshot(notificationsRef, {
+  const q = query(collection(db, 'notifications'), where('userId', '==', userId));
+  return onSnapshot(q, {
     next: (snapshot) => {
       const list = snapshot.docs
         .map(doc => {
@@ -707,7 +969,7 @@ export const subscribeToNotifications = (userId: string, callback: (notification
 // ========================
 
 export const uploadFileToStorage = async (
-  path: string,
+  _path: string,
   file: File,
   onProgress?: (progress: number) => void
 ): Promise<string> => {
@@ -1096,7 +1358,15 @@ export const subscribeToClassMembers = (classId: string, callback: (members: any
   const q = query(collection(db, 'class_members'), where('classId', '==', classId));
   return onSnapshot(q, {
     next: (snap) => {
-      callback(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      callback(snap.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: data.studentId || doc.id,
+          name: data.studentName || data.name || '',
+          email: data.studentEmail || data.email || '',
+          ...data
+        };
+      }));
     },
     error: (err) => {
       if (onError) onError(err);
@@ -1105,42 +1375,43 @@ export const subscribeToClassMembers = (classId: string, callback: (members: any
   });
 };
 
+export const uploadFileToCloudinary = async (file: File): Promise<string> => {
+  const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+  const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+  
+  if (!cloudName || !uploadPreset) {
+    throw new Error('Cloudinary is not configured. Missing cloud name or upload preset.');
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', uploadPreset);
+
+  let resourceType = 'raw';
+  if (file.type.startsWith('image/')) resourceType = 'image';
+  else if (file.type.startsWith('video/') || file.type.startsWith('audio/')) resourceType = 'video';
+
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json();
+    throw new Error(errorData.error?.message || 'Failed to upload to Cloudinary');
+  }
+
+  const data = await res.json();
+  return data.secure_url;
+};
+
 export const uploadClassMaterial = async (classId: string, title: string, file: File | null, optionalUrl: string, uploadedBy: string) => {
   let fileUrl = optionalUrl;
   let fileName = file ? file.name : (optionalUrl ? 'External Link' : 'Unknown File');
   let fileSize = file ? `${(file.size / 1024).toFixed(1)} KB` : 'N/A';
 
   if (file) {
-    const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-    const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-    
-    if (!cloudName || !uploadPreset) {
-      throw new Error('Cloudinary is not configured. Missing cloud name or upload preset.');
-    }
-
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('upload_preset', uploadPreset);
-
-    // 'raw' = documents (PDF, DOCX, etc.)
-    // 'image' = images
-    // 'video' = video/audio
-    let resourceType = 'raw';
-    if (file.type.startsWith('image/')) resourceType = 'image';
-    else if (file.type.startsWith('video/') || file.type.startsWith('audio/')) resourceType = 'video';
-
-    const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (!res.ok) {
-      const errorData = await res.json();
-      throw new Error(errorData.error?.message || 'Failed to upload to Cloudinary');
-    }
-
-    const data = await res.json();
-    fileUrl = data.secure_url;
+    fileUrl = await uploadFileToCloudinary(file);
   }
 
   const materialId = `material-${Date.now()}`;
@@ -1166,15 +1437,12 @@ export const verifyClassMembership = async (studentId: string, classId: string):
   return snap.exists();
 };
 
-export const subscribeToClassRecordings = (classId: string, callback: (recordings: any[]) => void, onError?: (error: any) => void) => {
+export const subscribeToClassRecordings = (classId: string, callback: (recordings: RecordingRecord[]) => void, onError?: (error: any) => void) => {
   if (!classId) return () => {};
-  const q = query(collection(db, 'meetings'), where('classId', '==', classId), where('recordingUrl', '!=', ''));
+  const q = query(collection(db, 'recordings'), where('classId', '==', classId));
   return onSnapshot(q, {
     next: (snap) => {
-      const recordings = snap.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter((m: any) => m.recordingUrl && m.recordingUrl !== '#')
-      callback(recordings);
+      callback(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as RecordingRecord)));
     },
     error: (err) => {
       if (onError) onError(err);
@@ -1192,4 +1460,135 @@ export const removeMemberFromClass = async (classId: string, studentId: string) 
   await assertFacultyRole();
   const memberId = `${classId}_${studentId}`;
   await deleteDoc(doc(db, 'class_members', memberId));
+};
+
+// ========================
+// TEAMS
+// ========================
+
+export interface Team {
+  id: string;
+  name: string;
+  description?: string;
+  classId: string;
+  className?: string;
+  facultyId: string;
+  memberIds: string[];
+  memberNames?: string[];
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export const createTeam = async (data: {
+  name: string;
+  description?: string;
+  classId: string;
+  className?: string;
+  facultyId: string;
+  memberIds?: string[];
+  memberNames?: string[];
+}): Promise<Team> => {
+  const teamId = `team-${Date.now()}`;
+  const teamRef = doc(db, 'teams', teamId);
+  const payload: Omit<Team, 'id'> = {
+    name: data.name,
+    description: data.description || '',
+    classId: data.classId,
+    className: data.className || '',
+    facultyId: data.facultyId,
+    memberIds: data.memberIds || [],
+    memberNames: data.memberNames || [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await setDoc(teamRef, payload);
+  return { id: teamId, ...payload };
+};
+
+export const updateTeam = async (teamId: string, updates: Partial<Omit<Team, 'id' | 'createdAt'>>) => {
+  const teamRef = doc(db, 'teams', teamId);
+  await setDoc(teamRef, { ...updates, updatedAt: new Date().toISOString() }, { merge: true });
+};
+
+export const deleteTeam = async (teamId: string) => {
+  await deleteDoc(doc(db, 'teams', teamId));
+};
+
+export const addTeamMember = async (teamId: string, studentId: string, studentName: string) => {
+  const teamRef = doc(db, 'teams', teamId);
+  const snap = await getDoc(teamRef);
+  if (!snap.exists()) throw new Error('Team not found');
+  const data = snap.data() as Team;
+  const memberIds = Array.from(new Set([...(data.memberIds || []), studentId]));
+  const memberNames = Array.from(new Set([...(data.memberNames || []), studentName]));
+  await setDoc(teamRef, { memberIds, memberNames, updatedAt: new Date().toISOString() }, { merge: true });
+};
+
+export const removeTeamMember = async (teamId: string, studentId: string) => {
+  const teamRef = doc(db, 'teams', teamId);
+  const snap = await getDoc(teamRef);
+  if (!snap.exists()) throw new Error('Team not found');
+  const data = snap.data() as Team;
+  const memberIds = (data.memberIds || []).filter((id) => id !== studentId);
+  await setDoc(teamRef, { memberIds, updatedAt: new Date().toISOString() }, { merge: true });
+};
+
+export const subscribeToTeams = (
+  classId: string,
+  callback: (teams: Team[]) => void,
+  onError?: (err: any) => void
+) => {
+  if (!classId) return () => {};
+  const q = query(collection(db, 'teams'), where('classId', '==', classId));
+  return onSnapshot(q, {
+    next: (snap) => {
+      callback(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Team)));
+    },
+    error: (err) => {
+      if (onError) onError(err);
+      else console.error('Firestore subscribeToTeams error:', err);
+    },
+  });
+};
+
+export const subscribeToAllTeams = (
+  userId: string,
+  role: 'faculty' | 'student',
+  callback: (teams: Team[]) => void
+) => {
+  if (role === 'faculty') {
+    const q = query(collection(db, 'teams'), where('facultyId', '==', userId));
+    return onSnapshot(q, (snap) => {
+      callback(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Team)));
+    });
+  } else {
+    // Students: pull all teams and filter client-side (array-contains)
+    const q = query(collection(db, 'teams'), where('memberIds', 'array-contains', userId));
+    return onSnapshot(q, (snap) => {
+      callback(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Team)));
+    });
+  }
+};
+
+// ========================
+// ALL RECORDINGS (unified view)
+// ========================
+
+export const subscribeToAllRecordings = (
+  classIds: string[],
+  callback: (recordings: RecordingRecord[]) => void
+) => {
+  if (classIds.length === 0) {
+    callback([]);
+    return () => {};
+  }
+  // Firebase 'in' operator supports max 30 items; slice to be safe
+  const chunked = classIds.slice(0, 30);
+  const q = query(collection(db, 'recordings'), where('classId', 'in', chunked));
+  return onSnapshot(q, (snap) => {
+    const list = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() } as RecordingRecord))
+      .sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime());
+    callback(list);
+  });
 };

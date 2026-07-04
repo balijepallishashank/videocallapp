@@ -1,6 +1,9 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, BookOpen, User, Settings } from 'lucide-react'
+import {
+  LayoutDashboard, BookOpen, User, Settings, Calendar,
+  ClipboardCheck, Clapperboard, History, Users,
+} from 'lucide-react'
 
 interface SidebarProps {
   isOpen: boolean
@@ -9,6 +12,11 @@ interface SidebarProps {
 const NAV_ITEMS = [
   { path: '/student/dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-5 h-5" /> },
   { path: '/student/classes', label: 'My Classes', icon: <BookOpen className="w-5 h-5" /> },
+  { path: '/student/meeting-history', label: 'Meeting History', icon: <History className="w-5 h-5" /> },
+  { path: '/student/attendance', label: 'Attendance', icon: <ClipboardCheck className="w-5 h-5" /> },
+  { path: '/student/recordings', label: 'Recordings', icon: <Clapperboard className="w-5 h-5" /> },
+  { path: '/student/calendar', label: 'Calendar', icon: <Calendar className="w-5 h-5" /> },
+  { path: '/student/teams', label: 'Teams', icon: <Users className="w-5 h-5" /> },
   { path: '/student/profile', label: 'Profile', icon: <User className="w-5 h-5" /> },
   { path: '/student/settings', label: 'Settings', icon: <Settings className="w-5 h-5" /> },
 ]

@@ -7,7 +7,7 @@ import { NotificationBell, NotificationPanel } from '../ui/NotificationsSystem'
 import ProfileDropdown from '../ui/ProfileDropdown'
 import FacultySidebar from './FacultySidebar'
 import StudentSidebar from './StudentSidebar'
-import { logActivity, subscribeToLiveMeetings, subscribeToNotifications, updateUserPresenceStatus, type LiveMeetingInvite } from '../../services/db'
+import { logActivity, subscribeToLiveMeetings, subscribeToNotifications, updateUserPresenceStatus, subscribeToClasses, deleteNotification, type LiveMeetingInvite } from '../../services/db'
 
 interface ToastItem {
   id: string
@@ -46,6 +46,7 @@ export default function DashboardLayout() {
 
     window.addEventListener('beforeunload', handleUnload)
 
+    let isInitialLoad = true
     const unsubscribeNotifications = subscribeToNotifications(currentUser.id, (items) => {
       setNotifications(
         items.map((item) => ({
@@ -55,6 +56,20 @@ export default function DashboardLayout() {
           timestamp: item.createdAt,
         })),
       )
+
+      if (!isInitialLoad) {
+        const now = new Date()
+        items.forEach((item) => {
+          if (!item.read) {
+            const created = item.createdAt
+            const diffMs = now.getTime() - created.getTime()
+            if (diffMs >= 0 && diffMs < 15000) {
+              addToast(`${item.title}: ${item.description}`, item.type || 'info')
+            }
+          }
+        })
+      }
+      isInitialLoad = false
     })
 
     return () => {
@@ -64,18 +79,36 @@ export default function DashboardLayout() {
     }
   }, [currentUser, role])
 
+  const [enrolledClassIds, setEnrolledClassIds] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!currentUser || role !== 'student') return
+    const unsub = subscribeToClasses('student', currentUser.id, (classes) => {
+      setEnrolledClassIds(classes.map((c) => c.id))
+    })
+    return () => unsub()
+  }, [currentUser, role])
+
   useEffect(() => {
     const unsubscribeLive = subscribeToLiveMeetings((invites) => {
-      setLiveInvite(invites[0] || null)
+      if (role === 'faculty') {
+        const myFacultyInvite = invites.find((invite) => invite.facultyId === currentUser?.id)
+        setLiveInvite(myFacultyInvite || null)
+      } else if (role === 'student') {
+        const myEnrolledInvite = invites.find((invite) => invite.classId && enrolledClassIds.includes(invite.classId))
+        setLiveInvite(myEnrolledInvite || null)
+      } else {
+        setLiveInvite(null)
+      }
     })
 
     return () => unsubscribeLive()
-  }, [])
+  }, [enrolledClassIds, role, currentUser])
 
   const joinLiveInvite = useCallback(
     (invite: LiveMeetingInvite) => {
       if (invite.classId) {
-        navigate(`${isFaculty ? '/faculty' : '/student'}/class/${invite.classId}`)
+        navigate(`${isFaculty ? '/faculty' : '/student'}/class/${invite.classId}?join=true`)
         return
       }
 
@@ -110,12 +143,16 @@ export default function DashboardLayout() {
       {role === 'faculty' && <FacultySidebar isOpen={sidebarOpen} />}
       {role === 'student' && <StudentSidebar isOpen={sidebarOpen} />}
 
+      {/* Mobile Overlay */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-20 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       <div
-        className="flex-1 flex flex-col min-h-screen min-w-0"
-        style={{
-          marginLeft: sidebarOpen ? '280px' : '0px',
-          transition: 'margin-left 0.22s ease-in-out',
-        }}
+        className={`flex-1 flex flex-col min-h-screen min-w-0 transition-all duration-200 ease-in-out ${sidebarOpen ? 'md:ml-[280px]' : ''}`}
       >
         <header className="sticky top-0 z-20 w-full border-b border-white/10 bg-slate-950/80 px-6 py-4 backdrop-blur-xl">
           <div className="flex items-center justify-between gap-4">
@@ -170,7 +207,17 @@ export default function DashboardLayout() {
         isOpen={showNotificationPanel}
         notifications={notifications}
         onClose={() => setShowNotificationPanel(false)}
-        onClear={() => setNotifications([])}
+        onClear={async () => {
+          const itemsToClear = [...notifications]
+          setNotifications([])
+          try {
+            await Promise.all(itemsToClear.map((item) => deleteNotification(item.id)))
+            addToast('All notifications cleared', 'success')
+          } catch (err) {
+            console.error('Failed to clear notifications from database', err)
+            addToast('Failed to clear notifications from database', 'error')
+          }
+        }}
       />
 
       <div className="fixed bottom-6 right-6 z-50 space-y-2">

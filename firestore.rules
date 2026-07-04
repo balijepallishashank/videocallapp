@@ -31,8 +31,7 @@ service cloud.firestore {
     }
 
     match /class_members/{memberId} {
-      allow get: if isAuthenticated() && (resource.data.studentId == request.auth.uid || isClassFaculty(resource.data.classId));
-      allow list: if isAuthenticated() && (resource.data.studentId == request.auth.uid || isClassFaculty(resource.data.classId));
+      allow read: if isAuthenticated() && (resource.data.studentId == request.auth.uid || isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId));
       allow create: if isAuthenticated() && request.resource.data.studentId == request.auth.uid && exists(/databases/$(database)/documents/classes/$(request.resource.data.classId));
       allow update, delete: if isClassFaculty(resource.data.classId);
     }
@@ -43,7 +42,10 @@ service cloud.firestore {
       allow delete: if isClassFaculty(resource.data.classId);
       
       match /{document=**} {
-        allow read, write: if isAuthenticated();
+        allow read, write: if isAuthenticated() && (
+          isClassFaculty(get(/databases/$(database)/documents/meetings/$(meetingId)).data.classId) ||
+          isClassMember(get(/databases/$(database)/documents/meetings/$(meetingId)).data.classId)
+        );
       }
     }
 

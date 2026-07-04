@@ -61,8 +61,8 @@ export default function FacultyDashboardView() {
               <div className="mt-1 text-lg font-bold text-white">{liveInvite.title}</div>
               <div className="text-sm text-slate-300">{liveInvite.sectionName} · {liveInvite.host}</div>
             </div>
-            <button onClick={() => navigate('/faculty/classes')} className="rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-bold text-slate-950">
-              Manage class
+            <button onClick={() => navigate(`/faculty/class/${liveInvite.classId}?join=true`)} className="rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-bold text-slate-950">
+              Join active class session
             </button>
           </div>
         </section>

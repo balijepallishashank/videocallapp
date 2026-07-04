@@ -1,6 +1,9 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, BookOpen, Video, CalendarClock, BarChart3, Settings } from 'lucide-react'
+import {
+  LayoutDashboard, BookOpen, Settings, Calendar,
+  BarChart2, Users, Video, ClipboardList,
+} from 'lucide-react'
 
 interface SidebarProps {
   isOpen: boolean
@@ -10,8 +13,10 @@ const NAV_ITEMS = [
   { path: '/faculty/dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-5 h-5" /> },
   { path: '/faculty/classes', label: 'My Classes', icon: <BookOpen className="w-5 h-5" /> },
   { path: '/faculty/meetings', label: 'Meetings', icon: <Video className="w-5 h-5" /> },
-  { path: '/faculty/scheduled-meetings', label: 'Scheduled Meetings', icon: <CalendarClock className="w-5 h-5" /> },
-  { path: '/faculty/analytics', label: 'Analytics', icon: <BarChart3 className="w-5 h-5" /> },
+  { path: '/faculty/scheduled-meetings', label: 'Scheduled', icon: <ClipboardList className="w-5 h-5" /> },
+  { path: '/faculty/calendar', label: 'Calendar', icon: <Calendar className="w-5 h-5" /> },
+  { path: '/faculty/teams', label: 'Teams', icon: <Users className="w-5 h-5" /> },
+  { path: '/faculty/analytics', label: 'Analytics', icon: <BarChart2 className="w-5 h-5" /> },
   { path: '/faculty/settings', label: 'Settings', icon: <Settings className="w-5 h-5" /> },
 ]
 

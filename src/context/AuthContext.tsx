@@ -22,6 +22,7 @@ export interface UserProfile {
   studentId?: string
   phone?: string
   profilePhoto?: string
+  darkMode?: boolean
   createdAt?: string
   updatedAt?: string
 }
@@ -39,6 +40,7 @@ interface AuthContextType {
     name: string,
     extraFields: Record<string, unknown>,
   ) => Promise<UserProfile>
+  updateCurrentUserProfile: (updates: Partial<UserProfile> & Record<string, unknown>) => void
   logout: () => Promise<void>
 }
 
@@ -51,6 +53,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isRegistering = useRef(false)
 
   useEffect(() => {
+    const storedKeys = Object.keys(localStorage);
+    const profileKey = storedKeys.find(k => k.startsWith('profile_'));
+    if (profileKey) {
+      try {
+        const stored = localStorage.getItem(profileKey);
+        if (stored) {
+          const profile = JSON.parse(stored);
+          if (profile.darkMode) {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
+        }
+      } catch (e) {}
+    }
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setFirebaseUser(user)
 
@@ -70,6 +88,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (profile) {
           setCurrentUser(profile)
           localStorage.setItem(`profile_${user.uid}`, JSON.stringify(profile))
+          if (profile.darkMode) {
+            document.documentElement.classList.add('dark')
+          } else {
+            document.documentElement.classList.remove('dark')
+          }
         } else {
           setCurrentUser(null)
         }
@@ -91,6 +114,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     setCurrentUser(profile)
     localStorage.setItem(`profile_${cred.user.uid}`, JSON.stringify(profile))
+    if (profile.darkMode) {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
     return profile
   }
 
@@ -118,15 +146,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await saveUserProfile(id, profileData)
     localStorage.setItem(`profile_${cred.user.uid}`, JSON.stringify(profile))
     setCurrentUser(profile)
+    if (profile.darkMode) {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
     return profile
     } finally {
       isRegistering.current = false;
     }
   }
 
+  const updateCurrentUserProfile = (updates: Partial<UserProfile> & Record<string, unknown>) => {
+    setCurrentUser((prev) => {
+      if (!prev) return prev
+
+      const nextUser = { ...prev, ...updates }
+      localStorage.setItem(`profile_${prev.id}`, JSON.stringify(nextUser))
+      if (nextUser.darkMode) {
+        document.documentElement.classList.add('dark')
+      } else {
+        document.documentElement.classList.remove('dark')
+      }
+      return nextUser as UserProfile
+    })
+  }
+
   const logout = async () => {
     const user = auth.currentUser
-    if (user) localStorage.removeItem(`profile_${user.uid}`)
+    if (user) {
+      localStorage.removeItem(`profile_${user.uid}`)
+      document.documentElement.classList.remove('dark')
+    }
     await signOut(auth)
     setCurrentUser(null)
   }
@@ -140,6 +191,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         login,
         register,
+        updateCurrentUserProfile,
         logout,
       }}
     >

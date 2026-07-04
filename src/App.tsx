@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import LoginPage from './pages/LoginPage'
@@ -6,6 +7,7 @@ import DashboardLayout from './components/layout/DashboardLayout'
 import FacultyDashboardView from './features/dashboard/FacultyDashboardView'
 import StudentDashboardView from './features/dashboard/StudentDashboardView'
 import ClassDetailView from './features/dashboard/ClassDetailView'
+import NotFoundPage from './pages/NotFoundPage'
 import { joinClassByCode } from './services/db'
 import {
   AttendanceView,
@@ -19,6 +21,15 @@ import {
   RecordingsView,
   SettingsPageWrapper,
 } from './pages/SubViews'
+
+const CalendarView = lazy(() => import('./features/calendar/CalendarView'))
+const TeamsView = lazy(() => import('./features/teams/TeamsView'))
+
+const SuspenseFallback = () => (
+  <div className="flex items-center justify-center min-h-[40vh]">
+    <div className="h-8 w-8 animate-spin rounded-full border-4 border-cyan-500 border-t-transparent" />
+  </div>
+)
 
 function HomeRedirect() {
   const { isAuthenticated, currentUser, isLoading } = useAuth()
@@ -83,6 +94,7 @@ export default function App() {
       <Route path="/login" element={<LoginPageRedirect />} />
       <Route path="/" element={<HomeRedirect />} />
 
+      {/* ── Faculty routes ───────────────────────── */}
       <Route
         path="/faculty"
         element={
@@ -97,12 +109,15 @@ export default function App() {
         <Route path="class/:classId" element={<ClassDetailView />} />
         <Route path="meetings" element={<FacultyMeetingsView />} />
         <Route path="scheduled-meetings" element={<ScheduledMeetingsView />} />
+        <Route path="calendar" element={<Suspense fallback={<SuspenseFallback />}><CalendarView /></Suspense>} />
+        <Route path="teams" element={<Suspense fallback={<SuspenseFallback />}><TeamsView /></Suspense>} />
         <Route path="analytics" element={<AnalyticsView />} />
         <Route path="profile" element={<ProfileView />} />
         <Route path="settings" element={<SettingsPageWrapper />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Route>
 
+      {/* ── Student routes ───────────────────────── */}
       <Route
         path="/student"
         element={
@@ -119,12 +134,15 @@ export default function App() {
         <Route path="meeting-history" element={<MeetingHistoryView />} />
         <Route path="recordings" element={<RecordingsView />} />
         <Route path="attendance" element={<AttendanceView />} />
+        <Route path="calendar" element={<Suspense fallback={<SuspenseFallback />}><CalendarView /></Suspense>} />
+        <Route path="teams" element={<Suspense fallback={<SuspenseFallback />}><TeamsView /></Suspense>} />
         <Route path="profile" element={<ProfileView />} />
         <Route path="settings" element={<SettingsPageWrapper />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Route>
 
-      <Route path="*" element={<Navigate to="/" replace />} />
+      {/* ── 404 ─────────────────────────────────── */}
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   )
 }

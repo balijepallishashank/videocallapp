@@ -17,25 +17,8 @@ import AgoraRTC, {
 } from 'agora-rtc-sdk-ng'
 
 export const APP_ID = import.meta.env.VITE_AGORA_APP_ID as string | undefined
-export const APP_CERTIFICATE = import.meta.env.VITE_AGORA_APP_CERTIFICATE as string | undefined
-
-// Helper to generate a temporary token for local testing (only safe if Vite doesn't expose this to the client, but since we are doing this purely client-side for this demo, it's a workaround. In a real production app, this should be fetched from a backend).
-async function generateToken(appId: string, appCertificate: string, channelName: string, uid: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const msg = encoder.encode(appId + channelName + uid);
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(appCertificate),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const signature = await crypto.subtle.sign('HMAC', key, msg);
-  // Convert to base64 safely
-  const hashArray = Array.from(new Uint8Array(signature));
-  const hashHex = hashArray.map(b => String.fromCharCode(b)).join('');
-  return btoa(hashHex);
-}
+// Token is fetched from backend (Cloud Function)
+export const TOKEN_SERVER_URL = import.meta.env.VITE_AGORA_TOKEN_SERVER_URL as string | undefined
 
 export interface RemoteParticipant {
   uid: UID
@@ -67,12 +50,20 @@ export async function joinChannel(
   const agoraClient = getAgoraClient()
   
   let token: string | null = null;
-  if (APP_ID && APP_CERTIFICATE) {
+  if (TOKEN_SERVER_URL) {
     try {
-      token = await generateToken(APP_ID, APP_CERTIFICATE, channelName, uid);
+      const response = await fetch(`${TOKEN_SERVER_URL}?channelName=${channelName}&uid=${uid}`);
+      if (response.ok) {
+        const data = await response.json();
+        token = data.token;
+      } else {
+        console.warn('[Agora] Failed to fetch token from server:', response.statusText);
+      }
     } catch (e) {
-      console.warn('[Agora] Failed to generate token, falling back to null', e);
+      console.warn('[Agora] Error fetching token, falling back to null', e);
     }
+  } else {
+    console.warn('[Agora] No VITE_AGORA_TOKEN_SERVER_URL provided, attempting to join without token.');
   }
 
   await agoraClient.join(APP_ID, channelName, token, uid)

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useOutletContext } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { BookOpen, Clapperboard, ClipboardCheck, Video } from 'lucide-react'
-import { subscribeToClasses, subscribeToMeetings, subscribeToScheduledMeetings } from '../../services/db'
+import { subscribeToClasses, subscribeToMeetings, subscribeToScheduledMeetings, subscribeToStudentAttendance } from '../../services/db'
 import type { MeetingRecord } from '../../features/meeting/MeetingHistory'
 
 interface OutletContext {
@@ -17,6 +17,7 @@ export default function StudentDashboardView() {
   const [classesCount, setClassesCount] = useState(0)
   const [meetings, setMeetings] = useState<MeetingRecord[]>([])
   const [upcomingCount, setUpcomingCount] = useState(0)
+  const [attendanceRate, setAttendanceRate] = useState<string>('100%')
 
   useEffect(() => {
     if (!currentUser || !currentUser.id) return
@@ -27,11 +28,21 @@ export default function StudentDashboardView() {
       const filtered = list.filter((meeting: any) => meeting.invitedStudents?.includes(currentUser.id) || meeting.classId)
       setUpcomingCount(filtered.length)
     })
+    const unsubAttendance = subscribeToStudentAttendance(currentUser.id, (records) => {
+      if (records.length === 0) {
+        setAttendanceRate('100%')
+        return
+      }
+      const presentOrLate = records.filter((r) => r.status === 'Present' || r.status === 'Late').length
+      const pct = Math.round((presentOrLate / records.length) * 100)
+      setAttendanceRate(`${pct}%`)
+    })
 
     return () => {
       unsubClasses()
       unsubMeetings()
       unsubScheduled()
+      unsubAttendance()
     }
   }, [currentUser])
 
@@ -70,7 +81,7 @@ export default function StudentDashboardView() {
         {[
           { label: 'Classes', value: classesCount, icon: <BookOpen className="h-4 w-4 text-cyan-300" /> },
           { label: 'Upcoming', value: upcomingCount, icon: <Video className="h-4 w-4 text-violet-300" /> },
-          { label: 'Attendance', value: `${Math.max(0, 100 - Math.min(upcomingCount * 5, 40))}%`, icon: <ClipboardCheck className="h-4 w-4 text-emerald-300" /> },
+          { label: 'Attendance', value: attendanceRate, icon: <ClipboardCheck className="h-4 w-4 text-emerald-300" /> },
           { label: 'Recordings', value: recordedCount, icon: <Clapperboard className="h-4 w-4 text-fuchsia-300" /> },
         ].map((item) => (
           <div key={item.label} className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl">

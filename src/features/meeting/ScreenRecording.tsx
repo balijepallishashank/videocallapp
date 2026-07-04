@@ -1,10 +1,14 @@
 import { useState, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { Video, Square, Download, Clock, Mic, MicOff } from 'lucide-react'
+import { uploadFileToCloudinary, saveRecording } from '../../services/db'
 
 interface ScreenRecordingProps {
   videoStream: MediaStream | null
   onToast: (message: string, type: 'info' | 'success' | 'warning' | 'error') => void
+  classId?: string
+  meetingId?: string
+  facultyId?: string
 }
 
 interface RecordingItem {
@@ -14,7 +18,7 @@ interface RecordingItem {
   extension: string
 }
 
-export default function ScreenRecording({ videoStream, onToast }: ScreenRecordingProps) {
+export default function ScreenRecording({ videoStream, onToast, classId, meetingId, facultyId }: ScreenRecordingProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
@@ -73,7 +77,7 @@ export default function ScreenRecording({ videoStream, onToast }: ScreenRecordin
         }
       }
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
         const mime = currentMimeTypeRef.current
         const extension = mime.includes('video/mp4') ? 'mp4' : 'webm'
         const blob = new Blob(chunksRef.current, { type: mime })
@@ -81,7 +85,30 @@ export default function ScreenRecording({ videoStream, onToast }: ScreenRecordin
         const duration = Math.floor((Date.now() - startTimeRef.current) / 1000)
         
         setRecordings(prev => [...prev, { url, duration, timestamp: new Date(), extension }])
-        onToast('Recording saved successfully!', 'success')
+        onToast('Recording saved locally', 'success')
+
+        if (classId && meetingId && facultyId) {
+          onToast('Uploading recording to Cloudinary...', 'info')
+          try {
+            const file = new File([blob], `recording-${meetingId}-${Date.now()}.${extension}`, { type: mime })
+            const cloudinaryUrl = await uploadFileToCloudinary(file)
+            
+            await saveRecording({
+              meetingId,
+              classId,
+              facultyId,
+              recordingUrl: cloudinaryUrl,
+              recordingName: `Meeting Recording - ${new Date().toLocaleDateString()}`,
+              duration: `${Math.floor(duration / 60)} mins ${duration % 60} secs`,
+              size: `${(blob.size / (1024 * 1024)).toFixed(1)} MB`,
+              allowDownload: true,
+            })
+            onToast('Recording saved to cloud successfully!', 'success')
+          } catch (err) {
+            console.error('Recording upload failed:', err)
+            onToast('Failed to save recording to cloud: ' + (err instanceof Error ? err.message : 'Unknown error'), 'error')
+          }
+        }
       }
 
       mediaRecorder.start()
