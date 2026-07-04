@@ -424,8 +424,8 @@ export default function ClassWorkspace() {
       let fileSizeStr = 'External Link'
 
       if (recordingFile) {
-        const fileUrl = await uploadFileToCloudinary(recordingFile)
-        finalUrl = fileUrl
+        const result = await uploadFileToCloudinary(recordingFile)
+        finalUrl = result.url
         fileSizeStr = `${(recordingFile.size / (1024 * 1024)).toFixed(1)} MB`
       }
 
@@ -596,8 +596,8 @@ export default function ClassWorkspace() {
       return
     }
 
-    if (materialFile && materialFile.size > 5 * 1024 * 1024) {
-      addToast('File must be smaller than 5MB.', 'error')
+    if (materialFile && materialFile.size > 50 * 1024 * 1024) {
+      addToast('File must be smaller than 50MB.', 'error')
       return
     }
 
@@ -617,7 +617,7 @@ export default function ClassWorkspace() {
       addToast('Material uploaded successfully.', 'success')
     } catch (err: any) {
       console.error('Material upload error:', err)
-      addToast('Failed to upload material.', 'error')
+      addToast(`Upload failed: ${(err as Error)?.message || 'Unknown error'}`, 'error')
     } finally {
       setIsUploadingMaterial(false)
     }
@@ -1333,27 +1333,88 @@ export default function ClassWorkspace() {
                           <div className="mt-0.5 text-xs text-slate-600">{material.fileSize}</div>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center gap-2 shrink-0">
                         {material.fileUrl ? (() => {
-                          const isPdf = material.fileName?.toLowerCase().endsWith('.pdf') || material.fileUrl.toLowerCase().includes('.pdf');
-                          const viewUrl = isPdf
-                            ? `https://docs.google.com/viewer?url=${encodeURIComponent(material.fileUrl)}`
-                            : material.fileUrl;
-                            
-                          const downloadUrl = material.fileUrl.includes('cloudinary.com') 
-                            ? material.fileUrl.replace('/upload/', '/upload/fl_attachment/')
-                            : material.fileUrl;
+                          const url = material.fileUrl as string;
+                          const name = (material.fileName as string) || 'download';
+                          const mimeType = (material.fileType as string) || '';
+                          const isVideo = mimeType.startsWith('video/');
+                          const isOfficeDoc = /\.(docx?|pptx?|xlsx?)$/i.test(name);
+
+                          const isSupabase = url.includes('supabase.co/storage');
+                          const isCloudinary = url.includes('cloudinary.com');
+                          const isPdf = mimeType === 'application/pdf' || name.toLowerCase().endsWith('.pdf');
+
+                          // --- VIEW URL ---
+                          // Supabase & images: direct URL (browsers open these natively)
+                          // Old Cloudinary raw PDFs need image URL rewrite to render
+                          // Office docs and unrecognised URLs: Google Docs viewer
+                          let viewUrl: string;
+                          if (isSupabase || (!isPdf && !isOfficeDoc)) {
+                            viewUrl = url;
+                          } else if (isCloudinary && isPdf) {
+                            viewUrl = url.replace('/raw/upload/', '/image/upload/');
+                          } else if (isPdf || isOfficeDoc) {
+                            viewUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(url)}`;
+                          } else {
+                            viewUrl = url;
+                          }
+
+                          // --- DOWNLOAD ---
+                          const handleDownload = async () => {
+                            if (isCloudinary) {
+                              // Cloudinary CORS blocks fetch — use fl_attachment URL directly
+                              const dlUrl = url.replace(/\/upload\//, '/upload/fl_attachment/');
+                              window.open(dlUrl, '_blank');
+                              return;
+                            }
+                            if (isSupabase) {
+                              // Supabase public buckets allow CORS — fetch as blob for true download
+                              try {
+                                const response = await fetch(url);
+                                if (!response.ok) throw new Error('response not ok');
+                                const blob = await response.blob();
+                                if (blob.size === 0) throw new Error('empty blob');
+                                const blobUrl = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = blobUrl;
+                                a.download = name;
+                                document.body.appendChild(a);
+                                a.click();
+                                document.body.removeChild(a);
+                                setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+                              } catch {
+                                // Fallback: server-side download header
+                                const dlUrl = `${url}?download=true`;
+                                window.open(dlUrl, '_blank');
+                              }
+                              return;
+                            }
+                            // Generic external link
+                            window.open(url, '_blank');
+                          };
 
                           return (
                             <>
-                              <a href={viewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/20 transition">
+                              <a
+                                href={viewUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/20 transition"
+                              >
                                 <Eye className="h-4 w-4" />
                                 View
                               </a>
-                              <a href={downloadUrl} download target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/40 px-4 py-2.5 text-sm font-semibold text-slate-300 hover:bg-slate-900 transition">
-                                <Download className="h-4 w-4" />
-                                Download
-                              </a>
+                              {!isVideo && (
+                                <button
+                                  type="button"
+                                  onClick={handleDownload}
+                                  className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/40 px-4 py-2.5 text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"
+                                >
+                                  <Download className="h-4 w-4" />
+                                  Download
+                                </button>
+                              )}
                             </>
                           );
                         })() : null}

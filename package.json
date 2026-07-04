@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@mediapipe/selfie_segmentation": "^0.1.1675465747",
+    "@supabase/supabase-js": "^2.110.0",
     "agora-rtc-react": "^2.5.1",
     "agora-rtc-sdk-ng": "^4.24.5",
     "date-fns": "^4.1.0",

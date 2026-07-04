@@ -178,12 +178,12 @@ export default function MeetingRoom({
       const id = `toast-${Date.now()}-${Math.random()}`
       setToasts((prev) => [...prev, { id, message: 'Uploading file to Cloudinary...', type: 'info' }])
       
-      const fileUrl = await uploadFileToCloudinary(file)
+      const result = await uploadFileToCloudinary(file)
       await addSharedFile(meetingId, {
         name: file.name,
         size: file.size,
         type: file.type,
-        url: fileUrl,
+        url: result.url,
         uploadedBy: currentUser.name,
       })
     } catch (err) {

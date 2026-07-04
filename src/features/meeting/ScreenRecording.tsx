@@ -91,13 +91,13 @@ export default function ScreenRecording({ videoStream, onToast, classId, meeting
           onToast('Uploading recording to Cloudinary...', 'info')
           try {
             const file = new File([blob], `recording-${meetingId}-${Date.now()}.${extension}`, { type: mime })
-            const cloudinaryUrl = await uploadFileToCloudinary(file)
+            const result = await uploadFileToCloudinary(file)
             
             await saveRecording({
               meetingId,
               classId,
               facultyId,
-              recordingUrl: cloudinaryUrl,
+              recordingUrl: result.url,
               recordingName: `Meeting Recording - ${new Date().toLocaleDateString()}`,
               duration: `${Math.floor(duration / 60)} mins ${duration % 60} secs`,
               size: `${(blob.size / (1024 * 1024)).toFixed(1)} MB`,

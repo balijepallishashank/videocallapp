@@ -11,6 +11,7 @@ import {
   getDocs,
   writeBatch
 } from 'firebase/firestore';
+import { supabase } from '../config/supabase';
 export { db } from '../config/firebase';
 import { db, auth } from '../config/firebase';
 import type { UserProfile } from '../context/AuthContext';
@@ -1375,43 +1376,38 @@ export const subscribeToClassMembers = (classId: string, callback: (members: any
   });
 };
 
-export const uploadFileToCloudinary = async (file: File): Promise<string> => {
-  const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-  const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-  
-  if (!cloudName || !uploadPreset) {
-    throw new Error('Cloudinary is not configured. Missing cloud name or upload preset.');
+// Upload a file to Supabase Storage and return its permanent public URL.
+// Kept the same export name so all existing callers (MeetingRoom, ScreenRecording) work unchanged.
+export const uploadFileToCloudinary = async (file: File, folder = 'general'): Promise<{ url: string; resourceType: string }> => {
+  const timestamp = Date.now();
+  // Sanitise filename: replace spaces and special chars with underscores
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const filePath = `${folder}/${timestamp}_${safeName}`;
+
+  const { error } = await supabase.storage
+    .from('material')
+    .upload(filePath, file, {
+      contentType: file.type || 'application/octet-stream',
+      upsert: false,
+    });
+
+  if (error) {
+    throw new Error(`Upload failed: ${error.message}`);
   }
 
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('upload_preset', uploadPreset);
-
-  let resourceType = 'raw';
-  if (file.type.startsWith('image/')) resourceType = 'image';
-  else if (file.type.startsWith('video/') || file.type.startsWith('audio/')) resourceType = 'video';
-
-  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, {
-    method: 'POST',
-    body: formData,
-  });
-
-  if (!res.ok) {
-    const errorData = await res.json();
-    throw new Error(errorData.error?.message || 'Failed to upload to Cloudinary');
-  }
-
-  const data = await res.json();
-  return data.secure_url;
+  const { data } = supabase.storage.from('material').getPublicUrl(filePath);
+  return { url: data.publicUrl, resourceType: 'supabase' };
 };
 
 export const uploadClassMaterial = async (classId: string, title: string, file: File | null, optionalUrl: string, uploadedBy: string) => {
   let fileUrl = optionalUrl;
   let fileName = file ? file.name : (optionalUrl ? 'External Link' : 'Unknown File');
   let fileSize = file ? `${(file.size / 1024).toFixed(1)} KB` : 'N/A';
+  let fileType = file ? file.type : 'link';
 
   if (file) {
-    fileUrl = await uploadFileToCloudinary(file);
+    const result = await uploadFileToCloudinary(file, `materials/${classId}`);
+    fileUrl = result.url;
   }
 
   const materialId = `material-${Date.now()}`;
@@ -1422,10 +1418,12 @@ export const uploadClassMaterial = async (classId: string, title: string, file: 
     fileName,
     fileUrl,
     fileSize,
+    fileType,
     uploadedBy,
     uploadedAt: new Date().toISOString()
   });
 };
+
 
 export const deleteClassMaterial = async (materialId: string): Promise<void> => {
   await deleteDoc(doc(db, 'study_materials', materialId));

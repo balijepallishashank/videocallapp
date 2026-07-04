@@ -56,6 +56,8 @@ export interface WorkspaceMaterial {
   fileName?: string
   fileUrl?: string
   fileSize?: string
+  fileType?: string
+  cloudinaryResourceType?: string
   uploadedBy?: string
   uploadedAt?: string
 }
