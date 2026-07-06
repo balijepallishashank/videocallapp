@@ -40,7 +40,8 @@ app.get('/generateAgoraToken', (req, res) => {
   if (!uid || uid === '') {
     uid = 0;
   } else {
-    uid = isNaN(uid) ? uid : parseInt(uid, 10);
+    // Only convert to integer if it strictly contains only digits (numeric UID mode)
+    uid = /^\d+$/.test(uid) ? parseInt(uid, 10) : uid;
   }
 
   const role                  = RtcRole.PUBLISHER;

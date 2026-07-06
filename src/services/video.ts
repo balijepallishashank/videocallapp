@@ -80,16 +80,16 @@ export async function joinChannel(
     return { localVideoTrack: null, localAudioTrack: null }
   }
 
-  // Always create a fresh client to avoid stale state from previous sessions
-  if (client) {
-    try {
-      await client.leave()
-    } catch {
-      // ignore leave errors on stale client
-    }
-    client = null
-  }
   const agoraClient = getAgoraClient()
+
+  // Leave any existing channel before joining a new one
+  if (agoraClient.connectionState !== 'DISCONNECTED') {
+    try {
+      await agoraClient.leave()
+    } catch {
+      // ignore
+    }
+  }
 
   // Fetch a token from the server
   const token = await fetchToken(channelName, uid)
