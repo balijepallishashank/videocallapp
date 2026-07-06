@@ -50,7 +50,7 @@ app.get('/generateAgoraToken', (req, res) => {
   try {
     let token;
     if (typeof uid === 'string') {
-      token = RtcTokenBuilder.buildTokenWithAccount(
+      token = RtcTokenBuilder.buildTokenWithUserAccount(
         appID, appCertificate, channelName, uid, role, privilegeExpiredTs
       );
     } else {
