@@ -612,7 +612,9 @@ export const recordStudentJoin = async (
   studentId: string,
   startedAtIso: string | Date
 ) => {
-  await assertFacultyRole();
+  // Called by students — only requires authentication, not faculty role
+  const user = auth.currentUser;
+  if (!user) throw new Error('Unauthenticated user.');
   const attendanceId = `${meetingSessionId}_${studentId}`;
   const docRef = doc(db, 'meeting_attendance', attendanceId);
   const snap = await getDoc(docRef);
@@ -639,7 +641,9 @@ export const recordStudentLeave = async (
   studentId: string,
   sessionDurationSec: number
 ) => {
-  await assertFacultyRole();
+  // Called by students — only requires authentication, not faculty role
+  const user = auth.currentUser;
+  if (!user) throw new Error('Unauthenticated user.');
   const attendanceId = `${meetingSessionId}_${studentId}`;
   const docRef = doc(db, 'meeting_attendance', attendanceId);
   const snap = await getDoc(docRef);
@@ -969,7 +973,8 @@ export const subscribeToNotifications = (userId: string, callback: (notification
 // FIREBASE STORAGE INTERACTION
 // ========================
 
-export const uploadFileToStorage = async (
+// @deprecated — Cloudinary upload (unused since migration to Supabase Storage)
+const _legacyCloudinaryUpload = async (
   _path: string,
   file: File,
   onProgress?: (progress: number) => void
@@ -985,15 +990,10 @@ export const uploadFileToStorage = async (
   formData.append('file', file);
   formData.append('upload_preset', uploadPreset);
 
-  // 'raw' = documents (PDF, DOCX, etc.)
-  // 'image' = images
-  // 'video' = video/audio
   let resourceType = 'raw';
   if (file.type.startsWith('image/')) resourceType = 'image';
   else if (file.type.startsWith('video/') || file.type.startsWith('audio/')) resourceType = 'video';
 
-  // Note: onProgress is hard to emulate perfectly with fetch, 
-  // but we can call it at start and end to prevent UI hangs.
   if (onProgress) onProgress(10);
 
   const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, {
@@ -1009,6 +1009,8 @@ export const uploadFileToStorage = async (
   if (onProgress) onProgress(100);
   return data.secure_url;
 };
+// Suppress unused warning — kept for reference only
+void _legacyCloudinaryUpload;
 
 // ========================
 // ACTIVITY LOGGING
@@ -1377,8 +1379,7 @@ export const subscribeToClassMembers = (classId: string, callback: (members: any
 };
 
 // Upload a file to Supabase Storage and return its permanent public URL.
-// Kept the same export name so all existing callers (MeetingRoom, ScreenRecording) work unchanged.
-export const uploadFileToCloudinary = async (file: File, folder = 'general'): Promise<{ url: string; resourceType: string }> => {
+export const uploadFileToStorage = async (file: File, folder = 'general'): Promise<{ url: string; resourceType: string }> => {
   const timestamp = Date.now();
   // Sanitise filename: replace spaces and special chars with underscores
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -1406,7 +1407,7 @@ export const uploadClassMaterial = async (classId: string, title: string, file: 
   let fileType = file ? file.type : 'link';
 
   if (file) {
-    const result = await uploadFileToCloudinary(file, `materials/${classId}`);
+    const result = await uploadFileToStorage(file, `materials/${classId}`);
     fileUrl = result.url;
   }
 

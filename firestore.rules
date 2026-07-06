@@ -68,7 +68,10 @@ service cloud.firestore {
 
     match /meeting_attendance/{attendanceId} {
       allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
-      allow create, update: if isClassFaculty(request.resource.data.classId);
+      allow create: if isClassFaculty(request.resource.data.classId);
+      // Students can update their own attendance record (join/leave tracking)
+      allow update: if isClassFaculty(resource.data.classId) ||
+        (isAuthenticated() && resource.data.studentId == request.auth.uid);
       allow delete: if isClassFaculty(resource.data.classId);
     }
 

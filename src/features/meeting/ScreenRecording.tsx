@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { Video, Square, Download, Clock, Mic, MicOff } from 'lucide-react'
-import { uploadFileToCloudinary, saveRecording } from '../../services/db'
+import { uploadFileToStorage, saveRecording } from '../../services/db'
 
 interface ScreenRecordingProps {
   videoStream: MediaStream | null
@@ -88,10 +88,10 @@ export default function ScreenRecording({ videoStream, onToast, classId, meeting
         onToast('Recording saved locally', 'success')
 
         if (classId && meetingId && facultyId) {
-          onToast('Uploading recording to Cloudinary...', 'info')
+          onToast('Uploading recording...', 'info')
           try {
             const file = new File([blob], `recording-${meetingId}-${Date.now()}.${extension}`, { type: mime })
-            const result = await uploadFileToCloudinary(file)
+            const result = await uploadFileToStorage(file, `recordings/${classId}`)
             
             await saveRecording({
               meetingId,

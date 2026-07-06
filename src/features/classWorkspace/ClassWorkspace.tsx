@@ -50,7 +50,7 @@ import {
   renameRecording,
   toggleRecordingDownloadPermission,
   subscribeToClassRecordings,
-  uploadFileToCloudinary,
+  uploadFileToStorage,
 } from '../../services/db'
 import type { WorkspaceMaterial, WorkspaceMeeting, WorkspaceMember } from './types'
 import MeetingRoom from '../../pages/MeetingRoom'
@@ -424,7 +424,7 @@ export default function ClassWorkspace() {
       let fileSizeStr = 'External Link'
 
       if (recordingFile) {
-        const result = await uploadFileToCloudinary(recordingFile)
+        const result = await uploadFileToStorage(recordingFile)
         finalUrl = result.url
         fileSizeStr = `${(recordingFile.size / (1024 * 1024)).toFixed(1)} MB`
       }
@@ -828,9 +828,9 @@ export default function ClassWorkspace() {
             </>
           )}
 
-          {isFaculty && classRecord.inviteLink && (
+          {isFaculty && classRecord.classCode && (
             <a
-              href={`https://api.whatsapp.com/send?text=${encodeURIComponent(`Join my class "${classRecord.name}" on Video Pro using link: ${window.location.origin}/join/${classRecord.classCode} or Class Code: ${classRecord.classCode || ''}`)}`}
+              href={`https://api.whatsapp.com/send?text=${encodeURIComponent(`Join my class "${classRecord.name}" on Video Pro using link: ${classRecord.inviteLink || `${window.location.origin}/join/${classRecord.classCode}`} or Class Code: ${classRecord.classCode}`)}`}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/20"

@@ -33,7 +33,7 @@ import {
   subscribeToSharedFiles,
   addSharedFile,
   deleteSharedFile,
-  uploadFileToCloudinary,
+  uploadFileToStorage,
 } from '../services/db'
 
 interface MeetingParticipant {
@@ -176,9 +176,9 @@ export default function MeetingRoom({
   const handleFileUpload = async (file: File) => {
     try {
       const id = `toast-${Date.now()}-${Math.random()}`
-      setToasts((prev) => [...prev, { id, message: 'Uploading file to Cloudinary...', type: 'info' }])
+      setToasts((prev) => [...prev, { id, message: 'Uploading file...', type: 'info' }])
       
-      const result = await uploadFileToCloudinary(file)
+      const result = await uploadFileToStorage(file, `shared-files/${meetingId}`)
       await addSharedFile(meetingId, {
         name: file.name,
         size: file.size,

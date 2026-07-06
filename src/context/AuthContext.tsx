@@ -195,7 +195,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         logout,
       }}
     >
-      {!isLoading && children}
+      {isLoading ? (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 gap-4">
+          <div className="relative h-12 w-12">
+            <div className="absolute inset-0 animate-spin rounded-full border-4 border-cyan-500 border-t-transparent" />
+            <div className="absolute inset-2 animate-spin rounded-full border-4 border-emerald-400 border-b-transparent" style={{ animationDirection: 'reverse', animationDuration: '0.6s' }} />
+          </div>
+          <p className="text-slate-500 text-sm tracking-widest uppercase">Loading…</p>
+        </div>
+      ) : children}
     </AuthContext.Provider>
   )
 }
