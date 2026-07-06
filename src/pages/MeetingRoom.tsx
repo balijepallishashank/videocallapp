@@ -23,7 +23,9 @@ import {
   APP_ID,
   type ICameraVideoTrack,
   type IMicrophoneAudioTrack,
+  type ILocalVideoTrack,
   type RemoteParticipant,
+  createScreenVideoTrack,
 } from '../services/video'
 import {
   sendChatMessage,
@@ -34,6 +36,9 @@ import {
   addSharedFile,
   deleteSharedFile,
   uploadFileToStorage,
+  subscribeToMeetingState,
+  updateMeetingState,
+  toggleHandRaise,
 } from '../services/db'
 
 interface MeetingParticipant {
@@ -102,6 +107,7 @@ export default function MeetingRoom({
   const [agoraAudioTrack, setAgoraAudioTrack] = useState<IMicrophoneAudioTrack | null>(null)
   const agoraVideoTrackRef = useRef<ICameraVideoTrack | null>(null)
   const agoraAudioTrackRef = useRef<IMicrophoneAudioTrack | null>(null)
+  const screenVideoTrackRef = useRef<ILocalVideoTrack | null>(null)
 
   // Device lists & selection
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
@@ -137,6 +143,22 @@ export default function MeetingRoom({
     if (!meetingId) return
     const unsubscribe = subscribeToSharedFiles(meetingId, (files) => {
       setSharedFiles(files)
+    })
+    return () => unsubscribe()
+  }, [meetingId])
+
+  // Subscribe to live meeting state (whiteboard, speaking queue)
+  useEffect(() => {
+    if (!meetingId) return
+    const unsubscribe = subscribeToMeetingState(meetingId, (state) => {
+      if (state) {
+        if (state.isWhiteboardActive !== undefined) {
+          setShowWhiteboard(state.isWhiteboardActive)
+        }
+        if (state.speakingQueue !== undefined) {
+          setSpeakingQueue(state.speakingQueue)
+        }
+      }
     })
     return () => unsubscribe()
   }, [meetingId])
@@ -527,27 +549,42 @@ export default function MeetingRoom({
   }
 
   // Request to speak
-  const requestToSpeak = () => {
+  const requestToSpeak = async () => {
+    if (!meetingId || !currentUser) return
     if (speakingQueue.includes(currentUser.id)) return
-    setSpeakingQueue(prev => [...prev, currentUser.id])
-    addToast('You requested to speak', 'info')
-    sendChatMessage(meetingId, {
-      senderId: 'System',
-      senderName: 'System',
-      senderRole: 'faculty',
-      message: `${currentUser.name} raised their hand to speak`,
-    }).catch(e => console.error(e))
+    
+    try {
+      await toggleHandRaise(meetingId, currentUser.id, true)
+      addToast('You requested to speak', 'info')
+      sendChatMessage(meetingId, {
+        senderId: 'System',
+        senderName: 'System',
+        senderRole: 'faculty',
+        message: `${currentUser.name} raised their hand to speak`,
+      }).catch(e => console.error(e))
+    } catch (err) {
+      addToast('Failed to raise hand', 'error')
+    }
   }
 
-  const removeFromQueue = (participantId: string) => {
-    setSpeakingQueue(prev => prev.filter(id => id !== participantId))
+  const removeFromQueue = async (participantId: string) => {
+    if (!meetingId) return
+    try {
+      await toggleHandRaise(meetingId, participantId, false)
+    } catch (err) {
+      console.error('Failed to remove from queue:', err)
+    }
   }
 
-  const clearSpeakingQueue = () => {
-    setSpeakingQueue([])
+  const clearSpeakingQueue = async () => {
+    if (!meetingId) return
+    try {
+      await updateMeetingState(meetingId, { speakingQueue: [] })
+      addToast('Speaking queue cleared', 'info')
+    } catch (err) {
+      console.error('Failed to clear queue:', err)
+    }
   }
-
-  // Removed dev/mock media fallback to ensure real device access for realtime meetings
 
   const addToast = (message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     const id = `toast-${Date.now()}-${Math.random()}`
@@ -556,22 +593,35 @@ export default function MeetingRoom({
   }
 
   const toggleScreenShare = async () => {
+    const agoraClient = getAgoraClient()
     if (!isScreenSharing) {
       try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true })
-        screenShareStreamRef.current = stream
-        stream.getVideoTracks()[0].onended = () => {
-          setIsScreenSharing(false)
-          screenShareStreamRef.current = null
+        const screenTrack = await createScreenVideoTrack()
+        if (screenTrack) {
+          screenVideoTrackRef.current = screenTrack
+          screenTrack.on('track-ended', () => {
+            agoraClient.unpublish(screenTrack).catch(console.error)
+            screenVideoTrackRef.current = null
+            setIsScreenSharing(false)
+          })
+          
+          await agoraClient.publish(screenTrack)
+          setIsScreenSharing(true)
+          addToast('Screen sharing started', 'success')
         }
-        setIsScreenSharing(true)
-        addToast('Screen sharing started', 'success')
-      } catch {
+      } catch (err) {
+        console.error(err)
         addToast('Could not start screen sharing', 'error')
       }
     } else {
-      screenShareStreamRef.current?.getTracks().forEach(t => t.stop())
-      screenShareStreamRef.current = null
+      const screenTrack = screenVideoTrackRef.current
+      if (screenTrack) {
+        try {
+          await agoraClient.unpublish(screenTrack)
+          screenTrack.close()
+        } catch (e) {}
+      }
+      screenVideoTrackRef.current = null
       setIsScreenSharing(false)
       addToast('Screen sharing stopped', 'info')
     }
@@ -1401,7 +1451,19 @@ export default function MeetingRoom({
                 >
                   {/* Share Whiteboard */}
                   <button
-                    onClick={() => { setShowWhiteboard(prev => !prev); setShowMoreMenu(false) }}
+                    onClick={async () => {
+                      const nextState = !showWhiteboard;
+                      if (meetingId) {
+                        try {
+                          await updateMeetingState(meetingId, { isWhiteboardActive: nextState })
+                        } catch (err) {
+                          addToast('Failed to toggle whiteboard', 'error')
+                        }
+                      } else {
+                        setShowWhiteboard(nextState)
+                      }
+                      setShowMoreMenu(false)
+                    }}
                     className="w-full flex items-center gap-3 px-3.5 py-2 hover:bg-white/5 rounded-xl text-xs text-slate-300 hover:text-white transition-colors"
                   >
                     <Pencil className="w-4 h-4 text-cyan-400" />

@@ -13,6 +13,7 @@ import AgoraRTC, {
   type IMicrophoneAudioTrack,
   type IRemoteVideoTrack,
   type IRemoteAudioTrack,
+  type ILocalVideoTrack,
   type UID,
 } from 'agora-rtc-sdk-ng'
 
@@ -132,4 +133,15 @@ export async function leaveChannel(
   }
 }
 
-export type { ICameraVideoTrack, IMicrophoneAudioTrack, IRemoteVideoTrack, IRemoteAudioTrack, UID }
+export async function createScreenVideoTrack(): Promise<ILocalVideoTrack | null> {
+  try {
+    // "disable" ensures we only get a video track, no audio from screen
+    const screenTrack = await AgoraRTC.createScreenVideoTrack({ encoderConfig: '1080p_1', optimizationMode: 'detail' }, 'disable')
+    return screenTrack as ILocalVideoTrack
+  } catch (err) {
+    console.error('[Agora] Failed to create screen video track:', err)
+    return null
+  }
+}
+
+export type { ICameraVideoTrack, IMicrophoneAudioTrack, IRemoteVideoTrack, IRemoteAudioTrack, ILocalVideoTrack, UID }

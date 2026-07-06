@@ -9,11 +9,14 @@ import {
   query,
   where,
   getDocs,
-  writeBatch
+  writeBatch,
+  updateDoc,
+  arrayUnion,
+  arrayRemove
 } from 'firebase/firestore';
-import { supabase } from '../config/supabase';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 export { db } from '../config/firebase';
-import { db, auth } from '../config/firebase';
+import { db, auth, storage } from '../config/firebase';
 import type { UserProfile } from '../context/AuthContext';
 import type { AcademicBranch, AcademicDepartment, AcademicSection } from '../features/classWorkspace/types';
 import type { MeetingRecord } from '../features/meeting/MeetingHistory';
@@ -318,6 +321,27 @@ export const startLiveMeeting = async (channelName: string, details: Omit<LiveMe
     });
   });
   await batch.commit();
+};
+
+export const updateMeetingState = async (channelName: string, updates: Record<string, any>) => {
+  const docRef = doc(db, 'live_meetings', channelName);
+  await updateDoc(docRef, updates);
+};
+
+export const subscribeToMeetingState = (channelName: string, callback: (state: any) => void) => {
+  const docRef = doc(db, 'live_meetings', channelName);
+  return onSnapshot(docRef, (docSnap) => {
+    if (docSnap.exists()) {
+      callback(docSnap.data());
+    }
+  });
+};
+
+export const toggleHandRaise = async (channelName: string, userId: string, isRaising: boolean) => {
+  const docRef = doc(db, 'live_meetings', channelName);
+  await updateDoc(docRef, {
+    speakingQueue: isRaising ? arrayUnion(userId) : arrayRemove(userId)
+  });
 };
 
 export const endLiveMeeting = async (channelName: string) => {
@@ -1403,26 +1427,26 @@ export const subscribeToClassMembers = (classId: string, callback: (members: any
   });
 };
 
-// Upload a file to Supabase Storage and return its permanent public URL.
+// Upload a file to Firebase Storage and return its permanent public URL.
 export const uploadFileToStorage = async (file: File, folder = 'general'): Promise<{ url: string; resourceType: string }> => {
   const timestamp = Date.now();
   // Sanitise filename: replace spaces and special chars with underscores
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
   const filePath = `${folder}/${timestamp}_${safeName}`;
+  const storageRef = ref(storage, filePath);
 
-  const { error } = await supabase.storage
-    .from('material')
-    .upload(filePath, file, {
-      contentType: file.type || 'application/octet-stream',
-      upsert: false,
-    });
-
-  if (error) {
-    throw new Error(`Upload failed: ${error.message}`);
-  }
-
-  const { data } = supabase.storage.from('material').getPublicUrl(filePath);
-  return { url: data.publicUrl, resourceType: 'supabase' };
+  return new Promise((resolve, reject) => {
+    const uploadTask = uploadBytesResumable(storageRef, file);
+    uploadTask.on(
+      'state_changed',
+      null,
+      (error) => reject(new Error(`Upload failed: ${error.message}`)),
+      async () => {
+        const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+        resolve({ url: downloadURL, resourceType: 'firebase' });
+      }
+    );
+  });
 };
 
 export const uploadClassMaterial = async (classId: string, title: string, file: File | null, optionalUrl: string, uploadedBy: string) => {
