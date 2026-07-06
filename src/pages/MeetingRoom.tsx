@@ -58,7 +58,6 @@ interface MeetingRoomProps {
   meetingSessionId?: string
   meetingStartedAt?: Date | null
   meetingTitle: string
-  participants?: MeetingParticipant[]
   selectedStudents: SelectedStudent[]
   attendanceMap?: Record<string, boolean>
   currentUser: {
@@ -76,7 +75,6 @@ export default function MeetingRoom({
   meetingSessionId = '',
   meetingStartedAt = null,
   meetingTitle,
-  participants = [],
   selectedStudents = [],
   attendanceMap = {},
   currentUser,
@@ -93,7 +91,7 @@ export default function MeetingRoom({
   const [showWhiteboard, setShowWhiteboard] = useState(false)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [showInviteModal, setShowInviteModal] = useState(false)
-  
+
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isScreenSharing, setIsScreenSharing] = useState(false)
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
@@ -177,7 +175,7 @@ export default function MeetingRoom({
     try {
       const id = `toast-${Date.now()}-${Math.random()}`
       setToasts((prev) => [...prev, { id, message: 'Uploading file...', type: 'info' }])
-      
+
       const result = await uploadFileToStorage(file, `shared-files/${meetingId}`)
       await addSharedFile(meetingId, {
         name: file.name,
@@ -206,7 +204,6 @@ export default function MeetingRoom({
   useEffect(() => { agoraAudioTrackRef.current = agoraAudioTrack }, [agoraAudioTrack])
 
   const [remoteParticipants, setRemoteParticipants] = useState<RemoteParticipant[]>([])
-  const agoraJoined = useRef(false)
 
   const [meetingDuration, setMeetingDuration] = useState(0)
   const [speakingQueue, setSpeakingQueue] = useState<string[]>([])
@@ -287,21 +284,7 @@ export default function MeetingRoom({
 
       const id = `toast-${Date.now()}-${Math.random()}`
       setToasts((prev) => [...prev, { id, message: errorMessage, type: 'error' }])
-      
-      // Local dev fallback
-      try {
-        if ((typeof window !== 'undefined' && window.location && window.location.hostname.includes('localhost')) || process.env.NODE_ENV === 'development') {
-          const fake = createDevMediaStream()
-          localStreamRef.current = fake
-          setLocalStream(fake)
-          if (videoRef.current) videoRef.current.srcObject = fake
-          setToasts((prev) => [...prev, { id: `toast-${Date.now()}-${Math.random()}`, message: 'Using dev mock camera/mic', type: 'info' }])
-          return true
-        }
-      } catch (e) {
-        console.warn('Failed to create dev media stream', e)
-      }
-
+      // Do not fall back to dev/mock media streams — require real devices for realtime meetings
       return false
     }
   }, [isMuted, isVideoOn])
@@ -315,23 +298,24 @@ export default function MeetingRoom({
 
   // Agora Join/Leave Channel
   useEffect(() => {
-    if (!APP_ID || agoraJoined.current) return
-    agoraJoined.current = true
+    if (!APP_ID) return
 
+    let cancelled = false
     const agoraClient = getAgoraClient()
 
-    agoraClient.on('user-published', async (user, mediaType) => {
+    const onUserPublished = async (user: any, mediaType: 'audio' | 'video') => {
       await agoraClient.subscribe(user, mediaType)
+      if (cancelled) return
       setRemoteParticipants((prev) => {
         const existing = prev.find((p) => p.uid === user.uid)
         if (existing) {
           return prev.map((p) =>
             p.uid === user.uid
               ? {
-                  ...p,
-                  videoTrack: mediaType === 'video' ? user.videoTrack : p.videoTrack,
-                  audioTrack: mediaType === 'audio' ? user.audioTrack : p.audioTrack,
-                }
+                ...p,
+                videoTrack: mediaType === 'video' ? user.videoTrack : p.videoTrack,
+                audioTrack: mediaType === 'audio' ? user.audioTrack : p.audioTrack,
+              }
               : p,
           )
         }
@@ -345,40 +329,56 @@ export default function MeetingRoom({
         ]
       })
       if (mediaType === 'audio') user.audioTrack?.play()
-    })
+    }
 
-    agoraClient.on('user-unpublished', (user, mediaType) => {
+    const onUserUnpublished = (user: any, mediaType: 'audio' | 'video') => {
+      if (cancelled) return
       setRemoteParticipants((prev) =>
         prev.map((p) =>
           p.uid === user.uid
             ? {
-                ...p,
-                videoTrack: mediaType === 'video' ? undefined : p.videoTrack,
-                audioTrack: mediaType === 'audio' ? undefined : p.audioTrack,
-              }
+              ...p,
+              videoTrack: mediaType === 'video' ? undefined : p.videoTrack,
+              audioTrack: mediaType === 'audio' ? undefined : p.audioTrack,
+            }
             : p,
         ),
       )
-    })
+    }
 
-    agoraClient.on('user-left', (user) => {
+    const onUserLeft = (user: any) => {
+      if (cancelled) return
       setRemoteParticipants((prev) => prev.filter((p) => p.uid !== user.uid))
       const found = selectedStudents.find(s => s.id === String(user.uid))
       addToast(`${found ? found.name : `User ${user.uid}`} left the meeting`, 'info')
-    })
+    }
 
-    joinChannel(meetingId, currentUser.id).then(({ localVideoTrack, localAudioTrack }) => {
-      if (localVideoTrack) setAgoraVideoTrack(localVideoTrack)
-      if (localAudioTrack) setAgoraAudioTrack(localAudioTrack)
-    }).catch((err) => {
-      console.error('[Agora] Failed to join channel:', err)
-      addToast('Failed to connect to video server. Running in mock/offline mode.', 'warning')
-    })
+    agoraClient.on('user-published', onUserPublished)
+    agoraClient.on('user-unpublished', onUserUnpublished)
+    agoraClient.on('user-left', onUserLeft)
+
+    joinChannel(meetingId, currentUser.id)
+      .then(({ localVideoTrack, localAudioTrack }) => {
+        if (cancelled) return
+        if (localVideoTrack) setAgoraVideoTrack(localVideoTrack)
+        if (localAudioTrack) setAgoraAudioTrack(localAudioTrack)
+        addToast('Connected to video session', 'success')
+      })
+      .catch((err) => {
+        if (cancelled) return
+        console.error('[Agora] Failed to join channel:', err)
+        const msg = err instanceof Error ? err.message : String(err)
+        addToast(`Video server: ${msg || 'Connection failed — check your internet or camera permissions.'}`, 'error')
+      })
 
     return () => {
+      cancelled = true
+      agoraClient.off('user-published', onUserPublished)
+      agoraClient.off('user-unpublished', onUserUnpublished)
+      agoraClient.off('user-left', onUserLeft)
       leaveChannel(agoraVideoTrackRef.current, agoraAudioTrackRef.current)
-      agoraJoined.current = false
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetingId, currentUser.id])
 
   const studentJoinTimesRef = useRef<Record<string, number>>({})
@@ -521,7 +521,7 @@ export default function MeetingRoom({
     const hrs = Math.floor(seconds / 3600)
     const mins = Math.floor((seconds % 3600) / 60)
     const secs = seconds % 60
-    return hrs > 0 
+    return hrs > 0
       ? `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
       : `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
   }
@@ -547,43 +547,7 @@ export default function MeetingRoom({
     setSpeakingQueue([])
   }
 
-  // Dev fallback camera stream
-  const createDevMediaStream = (): MediaStream => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 640
-    canvas.height = 360
-    const ctx = canvas.getContext('2d')!
-    let frame = 0
-    const draw = () => {
-      ctx.fillStyle = '#0f172a'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-      ctx.fillStyle = '#06b6d4'
-      ctx.font = '40px sans-serif'
-      ctx.textAlign = 'center'
-      ctx.fillText('Faculty Camera', canvas.width / 2, canvas.height / 2)
-      ctx.font = '20px sans-serif'
-      ctx.fillText(`Frame ${frame++}`, canvas.width / 2, canvas.height / 2 + 40)
-      requestAnimationFrame(draw)
-    }
-    draw()
-
-    const canvasWithCapture = canvas as HTMLCanvasElement & { captureStream?: (fps?: number) => MediaStream }
-    const videoStream = canvasWithCapture.captureStream?.(15)
-    if (!videoStream) throw new Error('Canvas captureStream is not supported')
-
-    const AudioContextConstructor = window.AudioContext || (window as any).webkitAudioContext
-    const audioCtx = new AudioContextConstructor()
-    const oscillator = audioCtx.createOscillator()
-    oscillator.frequency.value = 0
-    const dest = audioCtx.createMediaStreamDestination()
-    oscillator.connect(dest)
-    oscillator.start()
-
-    const composed = new MediaStream()
-    videoStream.getVideoTracks().forEach((t) => composed.addTrack(t))
-    dest.stream.getAudioTracks().forEach((t) => composed.addTrack(t))
-    return composed
-  }
+  // Removed dev/mock media fallback to ensure real device access for realtime meetings
 
   const addToast = (message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     const id = `toast-${Date.now()}-${Math.random()}`
@@ -642,7 +606,8 @@ export default function MeetingRoom({
     onEndMeeting()
   }
 
-  // Faculty and Student registration filters
+  // Only show participants who are ACTUALLY connected via Agora (real-time only)
+  // — no placeholder/ghost tiles for students who haven't joined yet
   const selectedStudentIds = new Set(selectedStudents.map((student) => student.id))
 
   const allParticipants: MeetingParticipant[] = [
@@ -659,24 +624,13 @@ export default function MeetingRoom({
       const match = selectedStudents.find((s) => s.id === String(remote.uid))
       return {
         id: String(remote.uid),
-        name: match?.name ?? `Participant ${String(remote.uid).slice(-4)}`,
+        name: match?.name ?? `User ${String(remote.uid).slice(-6)}`,
         email: match?.email ?? '',
         isVideoOn: !!remote.videoTrack,
         isMuted: !remote.audioTrack,
         isHost: false,
       }
     }),
-    ...selectedStudents
-      .filter((s) => !remoteParticipants.some((r) => String(r.uid) === s.id))
-      .map((student) => ({
-        id: student.id,
-        name: student.name,
-        email: student.email,
-        isVideoOn: false,
-        isMuted: true,
-        isHost: false,
-      })),
-    ...participants,
   ]
 
   const sendMessage = async () => {
@@ -805,7 +759,7 @@ export default function MeetingRoom({
             <span className="text-xs text-slate-400 font-medium">Excellent Connection</span>
           </div>
           <div className="hidden sm:block h-4 w-px bg-white/10" />
-          
+
           {/* Code */}
           <span
             onClick={handleCopyInviteLink}
@@ -827,7 +781,7 @@ export default function MeetingRoom({
       <div className="flex-1 flex overflow-hidden relative">
         {/* Main interactive stage */}
         <div className="flex-1 flex flex-col md:flex-row p-4 gap-4 overflow-hidden relative min-w-0">
-          
+
           {/* Main Visual element */}
           <div className="flex-1 flex flex-col justify-center items-center relative overflow-hidden bg-slate-900/20 rounded-2xl border border-white/5">
             {showWhiteboard ? (
@@ -862,25 +816,21 @@ export default function MeetingRoom({
               </div>
             ) : (
               // Normal Fullscreen Participant Grid
-              <div className={`w-full h-full grid gap-4 p-2 items-center justify-center overflow-y-auto ${
-                fullscreenParticipant ? 'grid-cols-1' : getGridColsClass(allParticipants.length)
-              }`}>
+              <div className={`w-full h-full grid gap-4 p-2 items-center justify-center overflow-y-auto ${fullscreenParticipant ? 'grid-cols-1' : getGridColsClass(allParticipants.length)
+                }`}>
                 {(fullscreenParticipant ? allParticipants.filter(p => p.id === fullscreenParticipant) : allParticipants).map((participant) => {
                   const queuePosition = speakingQueue.indexOf(participant.id)
                   const isInQueue = queuePosition !== -1
-                  const isSpeaking = !participant.isMuted && (isInQueue || Math.random() > 0.8) // Simple prototype animation fallback
-                  
+                  const isSpeaking = !participant.isMuted && isInQueue
+
                   return (
                     <div
                       key={participant.id}
                       onClick={() => !fullscreenParticipant && setFullscreenParticipant(participant.id)}
-                      className={`relative rounded-2xl overflow-hidden bg-slate-900 aspect-video w-full h-full flex items-center justify-center border border-white/5 transition-all duration-300 ${
-                        fullscreenParticipant ? 'max-w-4xl mx-auto shadow-2xl' : 'hover:scale-[1.01]'
-                      } ${
-                        isSpeaking ? 'ring-2 ring-emerald-500 shadow-lg shadow-emerald-500/10' : ''
-                      } ${
-                        isInQueue ? 'ring-2 ring-yellow-400' : ''
-                      }`}
+                      className={`relative rounded-2xl overflow-hidden bg-slate-900 aspect-video w-full h-full flex items-center justify-center border border-white/5 transition-all duration-300 ${fullscreenParticipant ? 'max-w-4xl mx-auto shadow-2xl' : 'hover:scale-[1.01]'
+                        } ${isSpeaking ? 'ring-2 ring-emerald-500 shadow-lg shadow-emerald-500/10' : ''
+                        } ${isInQueue ? 'ring-2 ring-yellow-400' : ''
+                        }`}
                     >
                       {participant.isVideoOn ? (
                         <div className="w-full h-full relative">
@@ -893,10 +843,10 @@ export default function MeetingRoom({
                                     backgroundImage: virtualBg.id === 'custom' ? `url(${virtualBg.url})` : undefined,
                                     background: virtualBg.id !== 'custom' ? (
                                       virtualBg.id === 'office' ? 'linear-gradient(135deg,#0f172a 0%,#0b1220 100%)' :
-                                      virtualBg.id === 'nature' ? 'linear-gradient(135deg,#065f46 0%,#0b3b6b 100%)' :
-                                      virtualBg.id === 'abstract' ? 'linear-gradient(135deg,#6d28d9 0%,#be185d 100%)' :
-                                      virtualBg.id === 'space' ? 'linear-gradient(135deg,#0f172a 0%,#1e1b4b 100%)' :
-                                      undefined
+                                        virtualBg.id === 'nature' ? 'linear-gradient(135deg,#065f46 0%,#0b3b6b 100%)' :
+                                          virtualBg.id === 'abstract' ? 'linear-gradient(135deg,#6d28d9 0%,#be185d 100%)' :
+                                            virtualBg.id === 'space' ? 'linear-gradient(135deg,#0f172a 0%,#1e1b4b 100%)' :
+                                              undefined
                                     ) : undefined,
                                   }}
                                 />
@@ -985,9 +935,8 @@ export default function MeetingRoom({
                 return (
                   <div
                     key={p.id}
-                    className={`relative rounded-xl overflow-hidden aspect-video bg-slate-900 border border-white/5 w-28 md:w-full flex-shrink-0 flex items-center justify-center ${
-                      isInQueue ? 'ring-2 ring-yellow-400' : ''
-                    }`}
+                    className={`relative rounded-xl overflow-hidden aspect-video bg-slate-900 border border-white/5 w-28 md:w-full flex-shrink-0 flex items-center justify-center ${isInQueue ? 'ring-2 ring-yellow-400' : ''
+                      }`}
                   >
                     {p.isVideoOn ? (
                       <div className="w-full h-full relative">
@@ -1086,7 +1035,7 @@ export default function MeetingRoom({
                       )}
                       <div ref={chatEndRef} />
                     </div>
-                    
+
                     <div className="flex gap-2 pt-4 border-t border-white/5 flex-shrink-0">
                       <input
                         type="text"
@@ -1120,7 +1069,7 @@ export default function MeetingRoom({
                         </button>
                       )}
                     </div>
-                    
+
                     <div className="space-y-2">
                       {allParticipants.map((p) => {
                         const isStudentParticipant = selectedStudentIds.has(p.id)
@@ -1142,12 +1091,12 @@ export default function MeetingRoom({
                                 <span className="text-[10px] text-slate-500 truncate block">{p.email || 'Student Role'}</span>
                               </div>
                             </div>
-                            
+
                             <div className="flex items-center gap-2 flex-shrink-0">
                               {isInQueue && (
                                 <span className="text-[9px] bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 px-1.5 py-0.5 rounded font-bold uppercase animate-pulse">Speak</span>
                               )}
-                              
+
                               {/* Audio/Video icons */}
                               <span className="text-slate-400">
                                 {p.isMuted ? <MicOff className="w-3.5 h-3.5 text-red-400" /> : <Mic className="w-3.5 h-3.5 text-emerald-400" />}
@@ -1159,11 +1108,10 @@ export default function MeetingRoom({
                                   {isStudentParticipant && (
                                     <button
                                       onClick={() => onToggleAttendance?.(p.id)}
-                                      className={`text-[9px] font-bold border rounded px-1.5 py-0.5 transition-all ${
-                                        isMarkedAttended 
-                                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
-                                          : 'bg-rose-500/20 text-rose-300 border-rose-400/30'
-                                      }`}
+                                      className={`text-[9px] font-bold border rounded px-1.5 py-0.5 transition-all ${isMarkedAttended
+                                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
+                                        : 'bg-rose-500/20 text-rose-300 border-rose-400/30'
+                                        }`}
                                     >
                                       {isMarkedAttended ? 'Present' : 'Absent'}
                                     </button>
@@ -1321,9 +1269,8 @@ export default function MeetingRoom({
 
       {/* 5. Centered bottom control bar */}
       <footer
-        className={`px-6 py-4 flex items-center justify-center transition-all duration-300 bg-slate-900/40 border-t border-white/5 backdrop-blur-md z-20 flex-shrink-0 ${
-          controlsVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
-        }`}
+        className={`px-6 py-4 flex items-center justify-center transition-all duration-300 bg-slate-900/40 border-t border-white/5 backdrop-blur-md z-20 flex-shrink-0 ${controlsVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
+          }`}
         onMouseEnter={() => setControlsVisible(true)}
       >
         <div className="flex items-center gap-3">
@@ -1332,11 +1279,10 @@ export default function MeetingRoom({
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={toggleMute}
-            className={`p-3.5 rounded-full border transition-all ${
-              isMuted
-                ? 'bg-red-500 hover:bg-red-600 text-white border-red-400/20 shadow-lg shadow-red-500/20'
-                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
-            }`}
+            className={`p-3.5 rounded-full border transition-all ${isMuted
+              ? 'bg-red-500 hover:bg-red-600 text-white border-red-400/20 shadow-lg shadow-red-500/20'
+              : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
+              }`}
             title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
           >
             {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
@@ -1347,11 +1293,10 @@ export default function MeetingRoom({
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={toggleVideo}
-            className={`p-3.5 rounded-full border transition-all ${
-              !isVideoOn
-                ? 'bg-red-500 hover:bg-red-600 text-white border-red-400/20 shadow-lg shadow-red-500/20'
-                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
-            }`}
+            className={`p-3.5 rounded-full border transition-all ${!isVideoOn
+              ? 'bg-red-500 hover:bg-red-600 text-white border-red-400/20 shadow-lg shadow-red-500/20'
+              : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
+              }`}
             title={isVideoOn ? 'Stop video' : 'Start video'}
           >
             {isVideoOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
@@ -1362,11 +1307,10 @@ export default function MeetingRoom({
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={toggleScreenShare}
-            className={`p-3.5 rounded-full border transition-all ${
-              isScreenSharing
-                ? 'bg-cyan-600 hover:bg-cyan-500 text-slate-950 border-cyan-400/20 shadow-lg shadow-cyan-600/20'
-                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
-            }`}
+            className={`p-3.5 rounded-full border transition-all ${isScreenSharing
+              ? 'bg-cyan-600 hover:bg-cyan-500 text-slate-950 border-cyan-400/20 shadow-lg shadow-cyan-600/20'
+              : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
+              }`}
             title={isScreenSharing ? 'Stop screen sharing' : 'Share screen'}
           >
             <Share2 className="w-5 h-5" />
@@ -1379,11 +1323,10 @@ export default function MeetingRoom({
               whileTap={{ scale: 0.95 }}
               onClick={requestToSpeak}
               disabled={speakingQueue.includes(currentUser.id)}
-              className={`p-3.5 rounded-full border transition-all ${
-                speakingQueue.includes(currentUser.id)
-                  ? 'bg-yellow-500 hover:bg-yellow-600 text-slate-950 border-yellow-400/20 shadow-lg shadow-yellow-500/20'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
-              }`}
+              className={`p-3.5 rounded-full border transition-all ${speakingQueue.includes(currentUser.id)
+                ? 'bg-yellow-500 hover:bg-yellow-600 text-slate-950 border-yellow-400/20 shadow-lg shadow-yellow-500/20'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
+                }`}
               title="Raise hand to speak"
             >
               <Hand className="w-5 h-5" />
@@ -1393,11 +1336,10 @@ export default function MeetingRoom({
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => setActiveDrawer(prev => prev === 'speakingQueue' ? null : 'speakingQueue')}
-              className={`relative p-3.5 rounded-full border transition-all ${
-                activeDrawer === 'speakingQueue'
-                  ? 'bg-yellow-500 hover:bg-yellow-600 text-slate-950 border-yellow-400/20 shadow-lg shadow-yellow-500/20'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
-              }`}
+              className={`relative p-3.5 rounded-full border transition-all ${activeDrawer === 'speakingQueue'
+                ? 'bg-yellow-500 hover:bg-yellow-600 text-slate-950 border-yellow-400/20 shadow-lg shadow-yellow-500/20'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
+                }`}
               title="View speaking queue"
             >
               <Hand className="w-5 h-5" />
@@ -1414,11 +1356,10 @@ export default function MeetingRoom({
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => setActiveDrawer(prev => prev === 'chat' ? null : 'chat')}
-            className={`p-3.5 rounded-full border transition-all ${
-              activeDrawer === 'chat'
-                ? 'bg-cyan-600 hover:bg-cyan-500 text-slate-950 border-cyan-400/20 shadow-lg shadow-cyan-600/20'
-                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
-            }`}
+            className={`p-3.5 rounded-full border transition-all ${activeDrawer === 'chat'
+              ? 'bg-cyan-600 hover:bg-cyan-500 text-slate-950 border-cyan-400/20 shadow-lg shadow-cyan-600/20'
+              : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
+              }`}
             title="Chat Messages"
           >
             <MessageSquare className="w-5 h-5" />
@@ -1429,11 +1370,10 @@ export default function MeetingRoom({
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => setActiveDrawer(prev => prev === 'participants' ? null : 'participants')}
-            className={`p-3.5 rounded-full border transition-all ${
-              activeDrawer === 'participants'
-                ? 'bg-cyan-600 hover:bg-cyan-500 text-slate-950 border-cyan-400/20 shadow-lg shadow-cyan-600/20'
-                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
-            }`}
+            className={`p-3.5 rounded-full border transition-all ${activeDrawer === 'participants'
+              ? 'bg-cyan-600 hover:bg-cyan-500 text-slate-950 border-cyan-400/20 shadow-lg shadow-cyan-600/20'
+              : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
+              }`}
             title="Participants List"
           >
             <Users className="w-5 h-5" />
@@ -1450,7 +1390,7 @@ export default function MeetingRoom({
             >
               <MoreVertical className="w-5 h-5" />
             </motion.button>
-            
+
             <AnimatePresence>
               {showMoreMenu && (
                 <motion.div
@@ -1516,7 +1456,7 @@ export default function MeetingRoom({
                   {currentUser.role === 'faculty' && (
                     <>
                       <div className="border-t border-white/5 my-1.5" />
-                      
+
                       {/* Recording */}
                       <button
                         onClick={() => { toggleRecording(); setShowMoreMenu(false) }}

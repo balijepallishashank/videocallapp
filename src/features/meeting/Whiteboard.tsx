@@ -29,33 +29,9 @@ export default function Whiteboard({ onToast, onClose, meetingId, currentUser }:
   const [textInput, setTextInput] = useState('')
   const [textPosition, setTextPosition] = useState<{ x: number; y: number } | null>(null)
   const [drawnIds] = useState(() => new Set<string>())
-  
-  // Simulated Multiplayer Cursors
-  const MOCK_CURSORS = [
-    { id: '1', name: 'Sarah Chen', color: '#ef4444', x: 100, y: 100, tx: 100, ty: 100 },
-    { id: '2', name: 'Alex Rivera', color: '#10b981', x: 300, y: 200, tx: 300, ty: 200 }
-  ]
-  const [cursors, setCursors] = useState(MOCK_CURSORS)
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCursors(prev => prev.map(c => {
-        const dx = c.tx - c.x;
-        const dy = c.ty - c.y;
-        const newX = c.x + dx * 0.15;
-        const newY = c.y + dy * 0.15;
-
-        let newTx = c.tx;
-        let newTy = c.ty;
-        if (Math.random() < 0.05) {
-          newTx = Math.random() * (containerRef.current?.offsetWidth || 800);
-          newTy = Math.random() * (containerRef.current?.offsetHeight || 600);
-        }
-        return { ...c, x: newX, y: newY, tx: newTx, ty: newTy };
-      }));
-    }, 50);
-    return () => clearInterval(interval);
-  }, [])
+  // Multiplayer cursors are driven by real-time updates — no local mock cursors
+  const [cursors] = useState<Array<any>>([])
 
   useEffect(() => {
     if (!meetingId) return
@@ -404,7 +380,7 @@ export default function Whiteboard({ onToast, onClose, meetingId, currentUser }:
       <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-white/10 shadow-lg z-10">
         {/* Left: Back to Meeting */}
         {onClose && (
-          <button 
+          <button
             onClick={onClose}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white transition-colors text-sm font-medium"
           >
@@ -420,11 +396,10 @@ export default function Whiteboard({ onToast, onClose, meetingId, currentUser }:
               <button
                 key={id}
                 onClick={() => setTool(id as Tool)}
-                className={`p-2 rounded-lg transition-all ${
-                  tool === id
-                    ? 'bg-blue-500/30 text-blue-400'
-                    : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
-                }`}
+                className={`p-2 rounded-lg transition-all ${tool === id
+                  ? 'bg-blue-500/30 text-blue-400'
+                  : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
+                  }`}
                 title={label}
               >
                 <Icon className="w-4 h-4" />
@@ -440,9 +415,8 @@ export default function Whiteboard({ onToast, onClose, meetingId, currentUser }:
               <button
                 key={c}
                 onClick={() => setColor(c)}
-                className={`w-5 h-5 rounded-full transition-transform ${
-                  color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900 scale-110' : 'hover:scale-110'
-                }`}
+                className={`w-5 h-5 rounded-full transition-transform ${color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900 scale-110' : 'hover:scale-110'
+                  }`}
                 style={{ backgroundColor: c }}
                 title="Select color"
               />

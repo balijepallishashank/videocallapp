@@ -37,9 +37,10 @@ service cloud.firestore {
     }
 
     match /meetings/{meetingId} {
-      allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
-      allow create, update: if isClassFaculty(request.resource.data.classId);
-      allow delete: if isClassFaculty(resource.data.classId);
+      allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId) || isAuthenticated();
+      allow create: if isClassFaculty(request.resource.data.classId) || (isFaculty() && request.resource.data.facultyId == request.auth.uid) || isFaculty();
+      allow update: if isClassFaculty(resource.data.classId) || (isFaculty() && resource.data.facultyId == request.auth.uid);
+      allow delete: if isClassFaculty(resource.data.classId) || (isFaculty() && resource.data.facultyId == request.auth.uid);
       
       match /{document=**} {
         allow read, write: if isAuthenticated() && (
@@ -51,7 +52,9 @@ service cloud.firestore {
 
     match /live_meetings/{meetingId} {
       allow read: if isAuthenticated();
-      allow create, update, delete: if isFaculty();
+      allow create: if isFaculty() || isAuthenticated();
+      allow update: if isFaculty() || (isAuthenticated() && resource.data.facultyId == request.auth.uid);
+      allow delete: if isFaculty() || (isAuthenticated() && resource.data.facultyId == request.auth.uid);
     }
 
     match /scheduled_meetings/{meetingId} {
@@ -67,12 +70,13 @@ service cloud.firestore {
     }
 
     match /meeting_attendance/{attendanceId} {
-      allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
-      allow create: if isClassFaculty(request.resource.data.classId);
+      allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId) || isAuthenticated();
+      allow create: if isClassFaculty(request.resource.data.classId) || isFaculty();
       // Students can update their own attendance record (join/leave tracking)
-      allow update: if isClassFaculty(resource.data.classId) ||
+      // Faculty can update any attendance record (end-meeting finalization)
+      allow update: if isFaculty() ||
         (isAuthenticated() && resource.data.studentId == request.auth.uid);
-      allow delete: if isClassFaculty(resource.data.classId);
+      allow delete: if isClassFaculty(resource.data.classId) || isFaculty();
     }
 
     match /study_materials/{materialId} {

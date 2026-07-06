@@ -22,6 +22,7 @@ import {
   subscribeToAllRecordings,
 } from '../services/db'
 import { collection, query, where, getDocs } from 'firebase/firestore'
+import { auth } from '../config/firebase'
 import MeetingHistory from '../features/meeting/MeetingHistory'
 import type { MeetingRecord } from '../features/meeting/MeetingHistory'
 
@@ -214,9 +215,9 @@ export function ClassesView() {
       },
       (err: any) => {
         console.error('Firestore subscribeToClasses error:', err)
-        const isPermissionDenied = err?.code === 'permission-denied' || 
-                                   err?.message?.includes('permission') || 
-                                   err?.message?.includes('Permissions');
+        const isPermissionDenied = err?.code === 'permission-denied' ||
+          err?.message?.includes('permission') ||
+          err?.message?.includes('Permissions');
         if (isPermissionDenied) {
           addToast("You don't have permission to load classes. Please verify your account role and Firestore rules.", 'error')
         } else {
@@ -256,9 +257,9 @@ export function ClassesView() {
       setShowCreateForm(false)
     } catch (err: any) {
       console.error('Firestore createClass error:', err)
-      const isPermissionDenied = err?.code === 'permission-denied' || 
-                                   err?.message?.includes('permission') || 
-                                   err?.message?.includes('Permissions');
+      const isPermissionDenied = err?.code === 'permission-denied' ||
+        err?.message?.includes('permission') ||
+        err?.message?.includes('Permissions');
       if (isPermissionDenied) {
         addToast("You don't have permission to create classes. Please verify your account role and Firestore rules.", 'error')
       } else {
@@ -377,7 +378,7 @@ export function ClassesView() {
 export function FacultyMeetingsView() {
   const { currentUser, addToast } = useOutletContext<OutletContext>()
   const navigate = useNavigate()
-  
+
   const [classesList, setClassesList] = useState<any[]>([])
   const [liveMeetings, setLiveMeetings] = useState<LiveMeetingInvite[]>([])
   const [showStartModal, setShowStartModal] = useState(false)
@@ -410,7 +411,7 @@ export function FacultyMeetingsView() {
       if (!cls) throw new Error('Selected class not found.')
 
       const channelName = selectedClassId
-      
+
       await startLiveMeeting(channelName, {
         id: channelName,
         title: meetingTitle.trim(),
@@ -441,7 +442,7 @@ export function FacultyMeetingsView() {
       addToast('Live meeting started successfully!', 'success')
       setShowStartModal(false)
       setMeetingTitle('')
-      
+
       navigate(`/faculty/class/${selectedClassId}?join=true`)
     } catch (err) {
       addToast(err instanceof Error ? err.message : 'Failed to start meeting.', 'error')
@@ -452,10 +453,29 @@ export function FacultyMeetingsView() {
 
   const handleEndLiveMeeting = async (classId: string) => {
     try {
+      // Ensure the current user context (client-side profile) is a faculty member
+      if (!currentUser || (currentUser.role && currentUser.role !== 'faculty')) {
+        addToast('Only faculty can end a live meeting. Verify your account role.', 'error')
+        return
+      }
+
+      if (!auth.currentUser) {
+        addToast('You must be signed in to end the meeting. Please reload and sign in again.', 'error')
+        return
+      }
+
       await endLiveMeeting(classId)
       addToast('Live meeting ended.', 'success')
     } catch (err) {
-      addToast('Failed to end meeting.', 'error')
+      console.error('endLiveMeeting error:', err)
+      const message = err instanceof Error ? err.message : String(err)
+      if (message.includes('permission-denied')) {
+        addToast('Permission denied when ending meeting — check Firestore rules and your faculty role.', 'error')
+      } else if (message.includes('Unauthenticated')) {
+        addToast('Authentication required. Please sign in and try again.', 'error')
+      } else {
+        addToast(message || 'Failed to end meeting.', 'error')
+      }
     }
   }
 
@@ -496,7 +516,7 @@ export function FacultyMeetingsView() {
           {liveMeetings.map((meeting) => {
             const cls = classesList.find((c) => c.id === meeting.classId)
             const activeStudents = cls?.activeStudentCount || 0
-            
+
             return (
               <div key={meeting.id} className="rounded-3xl border border-white/10 bg-slate-950/60 p-6 flex flex-col justify-between space-y-6 hover:border-emerald-500/30 transition animate-fade-in">
                 <div className="space-y-4">
@@ -510,7 +530,7 @@ export function FacultyMeetingsView() {
                       <span title="Not Recording" className="text-slate-600"><Clapperboard className="h-4 w-4" /></span>
                     </div>
                   </div>
-                  
+
                   <div>
                     <h3 className="text-lg font-bold text-white line-clamp-1">{meeting.title}</h3>
                     <p className="text-sm font-semibold text-cyan-400 mt-0.5">{meeting.sectionName}</p>
@@ -559,7 +579,7 @@ export function FacultyMeetingsView() {
               <h2 className="text-2xl font-black text-white">Start Live Meeting</h2>
               <p className="text-slate-400 text-sm mt-1">Launch an instant session for students to join.</p>
             </div>
-            
+
             <form onSubmit={handleStartLiveMeeting} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Select Class</label>
@@ -622,7 +642,7 @@ export function ScheduledMeetingsView() {
   const [scheduledMeetings, setScheduledMeetings] = useState<any[]>([])
   const [showFormModal, setShowFormModal] = useState(false)
   const [editingMeeting, setEditingMeeting] = useState<any | null>(null)
-  
+
   const [classId, setClassId] = useState('')
   const [title, setTitle] = useState('')
   const [date, setDate] = useState('')
@@ -1198,7 +1218,7 @@ export function AnalyticsView() {
   const [recordingsCount, setRecordingsCount] = useState(0)
 
   useEffect(() => {
-    const unsubClasses = currentUser ? subscribeToClasses(currentUser.role, currentUser.id, (list) => setClassesCount(list.length)) : () => {}
+    const unsubClasses = currentUser ? subscribeToClasses(currentUser.role, currentUser.id, (list) => setClassesCount(list.length)) : () => { }
     const unsubMeetings = subscribeToMeetings((list) => {
       setMeetingsCount(list.length)
       setRecordingsCount(list.filter((meeting) => Boolean(meeting.recording) || (meeting as any).recordingUrl).length)
@@ -1253,7 +1273,7 @@ export function AnalyticsView() {
               <line x1="40" y1="60" x2="260" y2="60" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
               <line x1="40" y1="100" x2="260" y2="100" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
               <line x1="40" y1="140" x2="260" y2="140" stroke="rgba(255,255,255,0.1)" strokeWidth="1" />
-              
+
               {/* Bar 1 (Classes) */}
               <rect x="70" y={140 - classHeight} width="30" height={classHeight} fill="url(#cyan-grad)" rx="4" className="transition-all duration-500" />
               {/* Bar 2 (Meetings) */}

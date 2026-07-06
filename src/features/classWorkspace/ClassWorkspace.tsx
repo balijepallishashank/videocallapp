@@ -551,8 +551,18 @@ export default function ClassWorkspace() {
 
   const endClassSession = async () => {
     if (!classId) return
-    await endLiveMeeting(classId)
-    addToast('Live class session ended.', 'info')
+    try {
+      await endLiveMeeting(classId)
+      addToast('Live class session ended.', 'success')
+    } catch (err: any) {
+      console.error('[ClassWorkspace] Failed to end live session:', err)
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.includes('permission-denied') || msg.includes('PERMISSION_DENIED')) {
+        addToast('Permission denied ending meeting — ensure your account has faculty role.', 'error')
+      } else {
+        addToast(msg || 'Failed to end meeting. Please try again.', 'error')
+      }
+    }
   }
 
   const handleScheduleMeeting = async (e: React.FormEvent) => {
@@ -697,7 +707,10 @@ export default function ClassWorkspace() {
         onEndMeeting={() => {
           setInCall(false)
           if (isFaculty) {
-            endClassSession()
+            // Fire and forget — endClassSession has its own error handling/toasts
+            endClassSession().catch((err) => {
+              console.error('[onEndMeeting] Unexpected error:', err)
+            })
           }
         }}
       />

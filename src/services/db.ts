@@ -1,8 +1,8 @@
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  getDoc, 
+import {
+  collection,
+  doc,
+  setDoc,
+  getDoc,
   addDoc,
   deleteDoc,
   onSnapshot,
@@ -93,7 +93,7 @@ const seedDefaultAcademicStructure = async () => {
     for (let yr = 1; yr <= 4; yr++) {
       for (const secName of sections) {
         const secId = `${br.id}_${yr}_${secName}`;
-        
+
         let subject = 'General Subject';
         if (br.id === 'CSE') {
           const subjects = ['Data Structures', 'DBMS', 'Operating Systems', 'Computer Networks', 'Software Engineering'];
@@ -285,7 +285,7 @@ export const startLiveMeeting = async (channelName: string, details: Omit<LiveMe
   const docRef = doc(db, 'live_meetings', channelName);
   const startedAt = new Date().toISOString();
   const meetingSessionId = (details as any).meetingSessionId || `meeting-${Date.now()}`;
-  
+
   await setDoc(docRef, {
     ...details,
     meetingSessionId,
@@ -296,7 +296,7 @@ export const startLiveMeeting = async (channelName: string, details: Omit<LiveMe
   const classId = details.classId || channelName;
   const membersSnap = await getDocs(query(collection(db, 'class_members'), where('classId', '==', classId)));
   const batch = writeBatch(db);
-  
+
   membersSnap.docs.forEach((memberDoc) => {
     const member = memberDoc.data();
     const studentId = member.studentId || member.id;
@@ -321,79 +321,104 @@ export const startLiveMeeting = async (channelName: string, details: Omit<LiveMe
 };
 
 export const endLiveMeeting = async (channelName: string) => {
+  // If a server-side function URL is configured, call it with the user's ID token
+  const fnUrl = import.meta.env.VITE_END_MEETING_FUNCTION_URL as string | undefined;
+  if (fnUrl) {
+    const user = auth.currentUser;
+    if (!user) throw new Error('Unauthenticated user.');
+    const token = await user.getIdToken();
+    const resp = await fetch(fnUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ channelName }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(text || `End meeting function failed: ${resp.status}`);
+    }
+    return;
+  }
+
   await assertFacultyRole();
   const docRef = doc(db, 'live_meetings', channelName);
   const snap = await getDoc(docRef);
-  
-  if (snap.exists()) {
-    const data = snap.data();
-    const meetingSessionId = data.meetingSessionId || `meeting-${channelName}`;
-    const startedAt = new Date(data.startedAt);
-    const duration = Math.round((Date.now() - startedAt.getTime()) / 1000);
-    const facultyId = data.facultyId || '';
-    const classId = data.classId || channelName;
 
-    // 1. Fetch current attendance records for this session
-    const attendanceQuery = query(
-      collection(db, 'meeting_attendance'),
-      where('meetingId', '==', meetingSessionId)
+  if (!snap.exists()) {
+    // Already deleted — nothing to do
+    console.warn('[endLiveMeeting] live_meeting doc not found for channel:', channelName);
+    return;
+  }
+
+  const data = snap.data();
+  const meetingSessionId = data.meetingSessionId || `meeting-${channelName}`;
+  const startedAt = new Date(data.startedAt);
+  const duration = Math.round((Date.now() - startedAt.getTime()) / 1000);
+  const facultyId = data.facultyId || '';
+  const classId = data.classId || channelName;
+  const endTimeStr = new Date().toISOString();
+
+  // ── STEP 1: Delete the live meeting doc (CRITICAL) ────────────────────────
+  // Do this FIRST so all clients see the meeting as ended immediately.
+  await deleteDoc(docRef);
+
+  // ── STEP 2: Finalize attendance (best-effort — non-blocking) ──────────────
+  try {
+    const attendanceSnap = await getDocs(
+      query(collection(db, 'meeting_attendance'), where('meetingId', '==', meetingSessionId))
     );
-    const attendanceSnap = await getDocs(attendanceQuery);
-    const batch = writeBatch(db);
-    const endTimeStr = new Date().toISOString();
 
-    // 2. Update active students who haven't left
-    attendanceSnap.docs.forEach((attDoc) => {
-      const attData = attDoc.data();
-      if (attData.joinTime && !attData.leaveTime) {
-        const studentJoinTime = new Date(attData.joinTime);
-        const sessionSec = Math.max(0, Math.round((Date.now() - studentJoinTime.getTime()) / 1000));
-        batch.update(attDoc.ref, {
-          leaveTime: endTimeStr,
-          duration: (attData.duration || 0) + sessionSec,
-          updatedAt: endTimeStr,
-        });
-      }
-    });
+    // Update each active student's leave time individually (avoid batch permission failures)
+    await Promise.allSettled(
+      attendanceSnap.docs.map(async (attDoc) => {
+        const attData = attDoc.data();
+        if (attData.joinTime && !attData.leaveTime) {
+          const sessionSec = Math.max(0, Math.round((Date.now() - new Date(attData.joinTime).getTime()) / 1000));
+          try {
+            await setDoc(attDoc.ref, {
+              leaveTime: endTimeStr,
+              duration: (attData.duration || 0) + sessionSec,
+              updatedAt: endTimeStr,
+            }, { merge: true });
+          } catch (e) {
+            console.warn('[endLiveMeeting] Could not update attendance for', attDoc.id, ':', e);
+          }
+        }
+      })
+    );
 
-    // 3. Create the completed meeting record
+    // ── STEP 3: Save completed meeting record (best-effort) ─────────────────
     const attendanceReport = attendanceSnap.docs.map((attDoc) => {
       const attData = attDoc.data();
-      const attended = attData.joinTime || attData.status !== 'Absent';
-      return {
-        name: attData.studentName || 'Student',
-        status: attended ? ('Attended' as const) : ('Absent' as const),
-      };
+      const attended = !!(attData.joinTime || attData.status !== 'Absent');
+      return { name: attData.studentName || 'Student', status: attended ? ('Attended' as const) : ('Absent' as const) };
     });
-
     const participantsList = attendanceSnap.docs
       .filter((attDoc) => attDoc.data().joinTime)
       .map((attDoc) => attDoc.data().studentName || 'Student');
 
-    const meetingRecordRef = doc(db, 'meetings', meetingSessionId);
-    batch.set(meetingRecordRef, {
-      id: meetingSessionId,
-      classId,
-      meetingId: meetingSessionId,
-      title: data.title || 'Live Session',
-      date: data.startedAt,
-      duration,
-      participants: participantsList,
-      attendanceReport,
-      recordingUrl: '',
-      recording: '',
-      createdAt: endTimeStr,
-      facultyId,
-    });
-
-    // 4. Delete the live meeting document
-    batch.delete(docRef);
-
-    await batch.commit();
-  } else {
-    await deleteDoc(docRef);
+    try {
+      await setDoc(doc(db, 'meetings', meetingSessionId), {
+        id: meetingSessionId,
+        classId,
+        meetingId: meetingSessionId,
+        title: data.title || 'Live Session',
+        date: data.startedAt,
+        duration,
+        participants: participantsList,
+        attendanceReport,
+        recordingUrl: '',
+        recording: '',
+        createdAt: endTimeStr,
+        facultyId,
+      });
+    } catch (e) {
+      console.warn('[endLiveMeeting] Could not save meeting record (non-critical):', e);
+    }
+  } catch (e) {
+    console.warn('[endLiveMeeting] Could not finalize attendance (non-critical):', e);
   }
 };
+
 
 export const subscribeToLiveMeetings = (callback: (invites: LiveMeetingInvite[]) => void, onError?: (error: any) => void) => {
   const colRef = collection(db, 'live_meetings');
@@ -625,7 +650,7 @@ export const recordStudentJoin = async (
       const startedAt = typeof startedAtIso === 'string' ? new Date(startedAtIso) : startedAtIso;
       const gracePeriodMs = 10 * 60 * 1000; // 10 minutes
       const isLate = (now.getTime() - startedAt.getTime()) > gracePeriodMs;
-      
+
       await setDoc(docRef, {
         status: isLate ? 'Late' : 'Present',
         joinTime: now.toISOString(),
@@ -687,7 +712,7 @@ export const toggleRecordingDownloadPermission = async (recordingId: string, all
 };
 
 export const subscribeToMeetingSummaries = (classId: string, callback: (summaries: MeetingSummary[]) => void, onError?: (error: any) => void) => {
-  if (!classId) return () => {};
+  if (!classId) return () => { };
   const q = query(collection(db, 'meeting_summaries'), where('classId', '==', classId));
   return onSnapshot(q, {
     next: (snapshot) => {
@@ -709,7 +734,7 @@ export const subscribeToMeetingSummaries = (classId: string, callback: (summarie
 };
 
 export const subscribeToMeetingAttendance = (classId: string, callback: (attendance: MeetingAttendance[]) => void, onError?: (error: any) => void) => {
-  if (!classId) return () => {};
+  if (!classId) return () => { };
   const q = query(collection(db, 'meeting_attendance'), where('classId', '==', classId));
   return onSnapshot(q, {
     next: (snapshot) => {
@@ -741,7 +766,7 @@ export const subscribeToMeetingAttendance = (classId: string, callback: (attenda
 };
 
 export const subscribeToStudentAttendance = (studentId: string, callback: (attendance: MeetingAttendance[]) => void, onError?: (error: any) => void) => {
-  if (!studentId) return () => {};
+  if (!studentId) return () => { };
   const q = query(collection(db, 'meeting_attendance'), where('studentId', '==', studentId));
   return onSnapshot(q, {
     next: (snapshot) => {
@@ -830,7 +855,7 @@ export const sendChatMessage = async (meetingId: string, message: Omit<ChatMessa
 };
 
 export const subscribeToChatMessages = (meetingId: string, callback: (messages: ChatMessage[]) => void, onError?: (error: any) => void) => {
-  if (!meetingId) return () => {};
+  if (!meetingId) return () => { };
   const messagesRef = collection(db, 'meetings', meetingId, 'messages');
   return onSnapshot(messagesRef, {
     next: (snapshot) => {
@@ -887,7 +912,7 @@ export const clearWhiteboard = async (meetingId: string, senderId: string, sende
 };
 
 export const subscribeToWhiteboardStrokes = (meetingId: string, callback: (strokes: WhiteboardStroke[]) => void, onError?: (error: any) => void) => {
-  if (!meetingId) return () => {};
+  if (!meetingId) return () => { };
   const whiteboardRef = collection(db, 'meetings', meetingId, 'whiteboard');
   return onSnapshot(whiteboardRef, {
     next: (snapshot) => {
@@ -947,7 +972,7 @@ export const deleteNotification = async (notificationId: string) => {
 };
 
 export const subscribeToNotifications = (userId: string, callback: (notifications: AppNotification[]) => void, onError?: (error: any) => void) => {
-  if (!userId) return () => {};
+  if (!userId) return () => { };
   const q = query(collection(db, 'notifications'), where('userId', '==', userId));
   return onSnapshot(q, {
     next: (snapshot) => {
@@ -981,7 +1006,7 @@ const _legacyCloudinaryUpload = async (
 ): Promise<string> => {
   const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
   const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-  
+
   if (!cloudName || !uploadPreset) {
     throw new Error('Cloudinary is not configured.');
   }
@@ -1086,7 +1111,7 @@ export const deleteSharedFile = async (meetingId: string, fileId: string) => {
 };
 
 export const subscribeToSharedFiles = (meetingId: string, callback: (files: SharedFile[]) => void, onError?: (error: any) => void) => {
-  if (!meetingId) return () => {};
+  if (!meetingId) return () => { };
   const filesRef = collection(db, 'meetings', meetingId, 'files');
   return onSnapshot(filesRef, {
     next: (snapshot) => {
@@ -1115,7 +1140,7 @@ export const generateUniqueMeetingCode = async (deptCode: string = 'VP', year: n
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let isUnique = false;
   let code = '';
-  
+
   while (!isUnique) {
     let suffix = '';
     for (let i = 0; i < 5; i++) {
@@ -1124,7 +1149,7 @@ export const generateUniqueMeetingCode = async (deptCode: string = 'VP', year: n
     const cleanDept = deptCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
     const cleanSection = sectionName.toUpperCase().replace(/[^A-Z0-9]/g, '');
     code = `${cleanDept}${year}${cleanSection}-${suffix}`;
-    
+
     // Check if code has been reserved/used
     const codeDocRef = doc(db, 'meeting_codes', code);
     const codeDocSnap = await getDoc(codeDocRef);
@@ -1139,14 +1164,14 @@ export const generateUniqueMeetingCode = async (deptCode: string = 'VP', year: n
 
 export const verifyMeetingEligibility = (studentProfile: any, meeting: any): boolean => {
   if (!studentProfile || !meeting) return false;
-  
+
   // Faculty is always eligible to join any meeting
   if (studentProfile.role === 'faculty') return true;
-  
+
   const matchBranch = studentProfile.branch?.toLowerCase() === meeting.branch?.toLowerCase();
   const matchYear = Number(studentProfile.year) === Number(meeting.year);
   const matchSection = studentProfile.section?.toLowerCase() === meeting.section?.toLowerCase();
-  
+
   return matchBranch && matchYear && matchSection;
 };
 
@@ -1265,7 +1290,7 @@ export const joinClassByCode = async (studentId: string, studentName: string, st
 
   const memberId = `${classId}_${studentId}`;
   const memberDocRef = doc(db, 'class_members', memberId);
-  
+
   const payload = {
     classId,
     studentId,
@@ -1286,7 +1311,7 @@ export const subscribeToClasses = (
   callback: (classes: any[]) => void,
   onError?: (error: any) => void
 ) => {
-  if (!userId) return () => {};
+  if (!userId) return () => { };
   if (role === 'faculty') {
     const q = query(collection(db, 'classes'), where('facultyId', '==', userId));
     return onSnapshot(q, {
@@ -1329,7 +1354,7 @@ export const subscribeToClasses = (
 };
 
 export const subscribeToClassMeetings = (classId: string, callback: (meetings: any[]) => void, onError?: (error: any) => void) => {
-  if (!classId) return () => {};
+  if (!classId) return () => { };
   const q = query(collection(db, 'meetings'), where('classId', '==', classId));
   return onSnapshot(q, {
     next: (snap) => {
@@ -1343,7 +1368,7 @@ export const subscribeToClassMeetings = (classId: string, callback: (meetings: a
 };
 
 export const subscribeToClassMaterials = (classId: string, callback: (materials: any[]) => void, onError?: (error: any) => void) => {
-  if (!classId) return () => {};
+  if (!classId) return () => { };
   const q = query(collection(db, 'study_materials'), where('classId', '==', classId));
   return onSnapshot(q, {
     next: (snap) => {
@@ -1357,7 +1382,7 @@ export const subscribeToClassMaterials = (classId: string, callback: (materials:
 };
 
 export const subscribeToClassMembers = (classId: string, callback: (members: any[]) => void, onError?: (error: any) => void) => {
-  if (!classId) return () => {};
+  if (!classId) return () => { };
   const q = query(collection(db, 'class_members'), where('classId', '==', classId));
   return onSnapshot(q, {
     next: (snap) => {
@@ -1437,7 +1462,7 @@ export const verifyClassMembership = async (studentId: string, classId: string):
 };
 
 export const subscribeToClassRecordings = (classId: string, callback: (recordings: RecordingRecord[]) => void, onError?: (error: any) => void) => {
-  if (!classId) return () => {};
+  if (!classId) return () => { };
   const q = query(collection(db, 'recordings'), where('classId', '==', classId));
   return onSnapshot(q, {
     next: (snap) => {
@@ -1537,7 +1562,7 @@ export const subscribeToTeams = (
   callback: (teams: Team[]) => void,
   onError?: (err: any) => void
 ) => {
-  if (!classId) return () => {};
+  if (!classId) return () => { };
   const q = query(collection(db, 'teams'), where('classId', '==', classId));
   return onSnapshot(q, {
     next: (snap) => {
@@ -1579,7 +1604,7 @@ export const subscribeToAllRecordings = (
 ) => {
   if (classIds.length === 0) {
     callback([]);
-    return () => {};
+    return () => { };
   }
   // Firebase 'in' operator supports max 30 items; slice to be safe
   const chunked = classIds.slice(0, 30);
