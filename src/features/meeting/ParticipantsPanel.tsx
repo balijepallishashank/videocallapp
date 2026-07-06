@@ -47,7 +47,7 @@ export default function ParticipantsPanel({
       </div>
 
       {/* Participants Grid - 3 columns for better use of space */}
-      <div className="grid grid-cols-3 gap-3 overflow-y-auto max-h-64 pr-1 custom-scrollbar">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 overflow-y-auto max-h-64 pr-1 custom-scrollbar">
         {displayParticipants.map((participant, index) => (
           <motion.div
             key={participant.id}

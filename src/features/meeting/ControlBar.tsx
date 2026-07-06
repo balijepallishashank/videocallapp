@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Mic, MicOff, Video, VideoOff, Phone, Monitor, Settings, Plus, Hand, Smile, Maximize, Minimize } from 'lucide-react'
+import { Mic, MicOff, Video, VideoOff, Phone, Monitor, Settings, Plus, Hand, Smile, Maximize, Minimize, Subtitles } from 'lucide-react'
 
 interface ControlBarProps {
   isMicOn: boolean
@@ -17,6 +17,8 @@ interface ControlBarProps {
   onReaction?: (emoji: string) => void
   onToggleFullscreen?: () => void
   isFullscreen?: boolean
+  isCaptionsOn?: boolean
+  onCaptionsToggle?: () => void
 }
 
 const QUICK_REACTIONS = [
@@ -82,6 +84,8 @@ export default function ControlBar({
   onReaction = () => {},
   onToggleFullscreen = () => {},
   isFullscreen = false,
+  isCaptionsOn = false,
+  onCaptionsToggle = () => {},
 }: ControlBarProps) {
   const [showReactions, setShowReactions] = useState(false)
 
@@ -150,6 +154,14 @@ export default function ControlBar({
 
         {/* Divider */}
         <div className="h-10 w-px bg-slate-600/50 mx-2" />
+
+        {/* Captions */}
+        <ControlButton
+          icon={Subtitles}
+          onClick={onCaptionsToggle}
+          label={isCaptionsOn ? 'Turn off captions' : 'Turn on captions'}
+          variant={isCaptionsOn ? 'success' : 'default'}
+        />
 
         {/* Hand Raise Button */}
         <motion.button

@@ -20,12 +20,26 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
     );
   }
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated || !currentUser) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  if (allowedRoles && currentUser && !allowedRoles.includes(currentUser.role)) {
-    return <Navigate to="/dashboard" replace />;
+  if (!currentUser.role) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-white p-6 text-center">
+        <div className="max-w-md rounded-3xl border border-red-500/30 bg-slate-900/50 p-8 backdrop-blur-xl shadow-2xl">
+          <h1 className="text-2xl font-black text-red-500 tracking-tight mb-4">Incomplete Profile</h1>
+          <p className="text-slate-300 leading-relaxed text-sm">
+            Your user profile is missing required registration information (missing role). Please contact a platform administrator or verify your database setup.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (allowedRoles && !allowedRoles.includes(currentUser.role)) {
+    const redirectPath = currentUser.role === 'faculty' ? '/faculty/dashboard' : '/student/dashboard';
+    return <Navigate to={redirectPath} replace />;
   }
 
   return <>{children}</>;

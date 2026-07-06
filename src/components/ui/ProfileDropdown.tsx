@@ -70,7 +70,6 @@ export default function ProfileDropdown({ userEmail, onViewProfile, onSettingsCl
               <motion.button
                 whileHover={{ backgroundColor: 'rgba(59, 130, 246, 0.2)' }}
                 onClick={() => {
-                  console.log('View Profile button clicked')
                   onViewProfile()
                   setIsOpen(false)
                 }}
@@ -84,7 +83,6 @@ export default function ProfileDropdown({ userEmail, onViewProfile, onSettingsCl
               <motion.button
                 whileHover={{ backgroundColor: 'rgba(168, 85, 247, 0.2)' }}
                 onClick={() => {
-                  console.log('Settings button clicked')
                   onSettingsClick()
                   setIsOpen(false)
                 }}

@@ -1,23 +1,35 @@
 import { useState, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { Video, Square, Download, Clock, Mic, MicOff } from 'lucide-react'
+import { uploadFileToStorage, saveRecording } from '../../services/db'
 
 interface ScreenRecordingProps {
   videoStream: MediaStream | null
   onToast: (message: string, type: 'info' | 'success' | 'warning' | 'error') => void
+  classId?: string
+  meetingId?: string
+  facultyId?: string
 }
 
-export default function ScreenRecording({ videoStream, onToast }: ScreenRecordingProps) {
+interface RecordingItem {
+  url: string
+  duration: number
+  timestamp: Date
+  extension: string
+}
+
+export default function ScreenRecording({ videoStream, onToast, classId, meetingId, facultyId }: ScreenRecordingProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const [recordAudio, setRecordAudio] = useState(true)
-  const [recordings, setRecordings] = useState<{ url: string; duration: number; timestamp: Date }[]>([])
+  const [recordings, setRecordings] = useState<RecordingItem[]>([])
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const timerRef = useRef<number | null>(null)
   const startTimeRef = useRef<number>(0)
+  const currentMimeTypeRef = useRef<string>('video/webm')
 
   const startRecording = async () => {
     if (!videoStream) {
@@ -32,9 +44,29 @@ export default function ScreenRecording({ videoStream, onToast }: ScreenRecordin
       
       const combinedStream = new MediaStream([...videoTracks, ...audioTracks])
 
-      const mediaRecorder = new MediaRecorder(combinedStream, {
-        mimeType: 'video/webm;codecs=vp9',
-      })
+      const mimeTypes = [
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm;codecs=h264',
+        'video/webm',
+        'video/mp4;codecs=avc1',
+        'video/mp4'
+      ]
+
+      let selectedMimeType = ''
+      for (const mime of mimeTypes) {
+        if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) {
+          selectedMimeType = mime
+          break
+        }
+      }
+
+      currentMimeTypeRef.current = selectedMimeType || 'video/webm'
+
+      const mediaRecorder = new MediaRecorder(
+        combinedStream,
+        selectedMimeType ? { mimeType: selectedMimeType } : undefined
+      )
 
       mediaRecorderRef.current = mediaRecorder
       chunksRef.current = []
@@ -45,13 +77,38 @@ export default function ScreenRecording({ videoStream, onToast }: ScreenRecordin
         }
       }
 
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'video/webm' })
+      mediaRecorder.onstop = async () => {
+        const mime = currentMimeTypeRef.current
+        const extension = mime.includes('video/mp4') ? 'mp4' : 'webm'
+        const blob = new Blob(chunksRef.current, { type: mime })
         const url = URL.createObjectURL(blob)
         const duration = Math.floor((Date.now() - startTimeRef.current) / 1000)
         
-        setRecordings([...recordings, { url, duration, timestamp: new Date() }])
-        onToast('Recording saved successfully!', 'success')
+        setRecordings(prev => [...prev, { url, duration, timestamp: new Date(), extension }])
+        onToast('Recording saved locally', 'success')
+
+        if (classId && meetingId && facultyId) {
+          onToast('Uploading recording...', 'info')
+          try {
+            const file = new File([blob], `recording-${meetingId}-${Date.now()}.${extension}`, { type: mime })
+            const result = await uploadFileToStorage(file, `recordings/${classId}`)
+            
+            await saveRecording({
+              meetingId,
+              classId,
+              facultyId,
+              recordingUrl: result.url,
+              recordingName: `Meeting Recording - ${new Date().toLocaleDateString()}`,
+              duration: `${Math.floor(duration / 60)} mins ${duration % 60} secs`,
+              size: `${(blob.size / (1024 * 1024)).toFixed(1)} MB`,
+              allowDownload: true,
+            })
+            onToast('Recording saved to cloud successfully!', 'success')
+          } catch (err) {
+            console.error('Recording upload failed:', err)
+            onToast('Failed to save recording to cloud: ' + (err instanceof Error ? err.message : 'Unknown error'), 'error')
+          }
+        }
       }
 
       mediaRecorder.start()
@@ -108,10 +165,10 @@ export default function ScreenRecording({ videoStream, onToast }: ScreenRecordin
     }
   }
 
-  const downloadRecording = (url: string, index: number) => {
+  const downloadRecording = (recording: RecordingItem, index: number) => {
     const a = document.createElement('a')
-    a.href = url
-    a.download = `meeting-recording-${index + 1}.webm`
+    a.href = recording.url
+    a.download = `meeting-recording-${index + 1}.${recording.extension}`
     a.click()
     onToast('Recording downloaded', 'success')
   }
@@ -230,7 +287,7 @@ export default function ScreenRecording({ videoStream, onToast }: ScreenRecordin
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.9 }}
-                  onClick={() => downloadRecording(recording.url, index)}
+                  onClick={() => downloadRecording(recording, index)}
                   className="p-2 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 transition-all"
                 >
                   <Download className="w-5 h-5" />

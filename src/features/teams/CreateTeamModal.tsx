@@ -120,7 +120,7 @@ export default function CreateTeamModal({
                   <label className="block text-sm font-semibold text-slate-300 mb-3">
                     Choose Workspace Icon
                   </label>
-                  <div className="grid grid-cols-6 gap-3">
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-3">
                     {TEAM_ICONS.map((iconData, index) => (
                       <motion.button
                         key={index}

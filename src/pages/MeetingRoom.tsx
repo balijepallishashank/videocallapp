@@ -1,40 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Video,
-  VideoOff,
-  Mic,
-  MicOff,
-  PhoneOff,
-  Users,
-  MessageSquare,
-  Settings,
-  Share2,
-  Circle,
-  Monitor,
-  MoreHorizontal,
-  Maximize,
-  Minimize,
-  Copy,
-  UserPlus,
-  Shield,
-  Hand,
-  Camera,
-  Clock,
-  Pencil,
-  Film,
-  Layers,
-  LayoutGrid,
-  Bell,
+  Video, VideoOff, Mic, MicOff, PhoneOff, Users, MessageSquare,
+  Settings, Share2, Circle, MoreVertical, Maximize, Minimize,
+  UserPlus, Shield, Hand, Clock, Pencil, Film, Layers,
+  LayoutGrid, Bell, X, Lock, Unlock, Info, UserX, FolderOpen
 } from 'lucide-react'
 import Whiteboard from '../features/meeting/Whiteboard'
 import BreakoutRooms from '../features/meeting/BreakoutRooms'
-import ScreenRecording from '../features/meeting/ScreenRecording'
 import VirtualBackgrounds from '../features/meeting/VirtualBackgrounds'
 import Toast from '../components/ui/Toast'
 import FloatingReactions from '../features/meeting/FloatingReactions'
 import MeetingInvite from '../features/meeting/MeetingInvite'
 import WaitingRoom, { type WaitingParticipant } from '../features/meeting/WaitingRoom'
 import AgoraVideoTile from '../components/ui/AgoraVideoTile'
+import ScreenRecording from '../features/meeting/ScreenRecording'
+import FileSharing, { type SharedFile } from '../features/meeting/FileSharing'
 import {
   joinChannel,
   leaveChannel,
@@ -44,6 +25,16 @@ import {
   type IMicrophoneAudioTrack,
   type RemoteParticipant,
 } from '../services/video'
+import {
+  sendChatMessage,
+  subscribeToChatMessages,
+  recordStudentJoin,
+  recordStudentLeave,
+  subscribeToSharedFiles,
+  addSharedFile,
+  deleteSharedFile,
+  uploadFileToStorage,
+} from '../services/db'
 
 interface MeetingParticipant {
   id: string
@@ -64,6 +55,8 @@ interface SelectedStudent {
 
 interface MeetingRoomProps {
   meetingId: string
+  meetingSessionId?: string
+  meetingStartedAt?: Date | null
   meetingTitle: string
   participants?: MeetingParticipant[]
   selectedStudents: SelectedStudent[]
@@ -75,42 +68,148 @@ interface MeetingRoomProps {
     role: 'faculty' | 'student'
   }
   onEndMeeting: () => void
-  onInviteParticipants?: () => void
   onToggleAttendance?: (studentId: string) => void
 }
 
 export default function MeetingRoom({
   meetingId,
+  meetingSessionId = '',
+  meetingStartedAt = null,
   meetingTitle,
   participants = [],
   selectedStudents = [],
   attendanceMap = {},
   currentUser,
   onEndMeeting,
-  onInviteParticipants,
   onToggleAttendance,
 }: MeetingRoomProps) {
   const [isVideoOn, setIsVideoOn] = useState(true)
   const [isMuted, setIsMuted] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
-  const [viewMode] = useState<'grid' | 'speaker'>('grid')
-  const [showParticipants, setShowParticipants] = useState(false)
-  const [showChat, setShowChat] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
+  const [isLocked, setIsLocked] = useState(false)
+
+  // Drawer & Panel state
+  const [activeDrawer, setActiveDrawer] = useState<'chat' | 'participants' | 'virtualBg' | 'breakoutRooms' | 'waitingRoom' | 'settings' | 'speakingQueue' | 'files' | null>(null)
+  const [showWhiteboard, setShowWhiteboard] = useState(false)
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const [showInviteModal, setShowInviteModal] = useState(false)
+  
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isScreenSharing, setIsScreenSharing] = useState(false)
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
 
-  // ── Agora state ────────────────────────────────────────────────────────────
+  // Agora tracks
   const [agoraVideoTrack, setAgoraVideoTrack] = useState<ICameraVideoTrack | null>(null)
   const [agoraAudioTrack, setAgoraAudioTrack] = useState<IMicrophoneAudioTrack | null>(null)
+  const agoraVideoTrackRef = useRef<ICameraVideoTrack | null>(null)
+  const agoraAudioTrackRef = useRef<IMicrophoneAudioTrack | null>(null)
+
+  // Device lists & selection
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
+  const [selectedVideoId, setSelectedVideoId] = useState<string>('')
+  const [selectedAudioId, setSelectedAudioId] = useState<string>('')
+
+  // Shared Files state
+  const [sharedFiles, setSharedFiles] = useState<SharedFile[]>([])
+
+  // Load devices and listen for changes
+  useEffect(() => {
+    async function getDevices() {
+      try {
+        const list = await navigator.mediaDevices.enumerateDevices()
+        const video = list.filter(d => d.kind === 'videoinput')
+        const audio = list.filter(d => d.kind === 'audioinput')
+        setVideoDevices(video)
+        setAudioDevices(audio)
+        if (video.length > 0 && !selectedVideoId) setSelectedVideoId(video[0].deviceId)
+        if (audio.length > 0 && !selectedAudioId) setSelectedAudioId(audio[0].deviceId)
+      } catch (err) {
+        console.error('Failed to list media devices:', err)
+      }
+    }
+    getDevices()
+    navigator.mediaDevices.addEventListener('devicechange', getDevices)
+    return () => navigator.mediaDevices.removeEventListener('devicechange', getDevices)
+  }, [activeDrawer])
+
+  // Subscribe to files shared in this meeting
+  useEffect(() => {
+    if (!meetingId) return
+    const unsubscribe = subscribeToSharedFiles(meetingId, (files) => {
+      setSharedFiles(files)
+    })
+    return () => unsubscribe()
+  }, [meetingId])
+
+  const changeVideoDevice = async (deviceId: string) => {
+    setSelectedVideoId(deviceId)
+    if (agoraVideoTrack) {
+      try {
+        await agoraVideoTrack.setDevice(deviceId)
+        const id = `toast-${Date.now()}-${Math.random()}`
+        setToasts((prev) => [...prev, { id, message: 'Camera switched successfully', type: 'success' }])
+      } catch (err) {
+        console.error('Failed to change camera device:', err)
+        const id = `toast-${Date.now()}-${Math.random()}`
+        setToasts((prev) => [...prev, { id, message: 'Failed to switch camera', type: 'error' }])
+      }
+    }
+  }
+
+  const changeAudioDevice = async (deviceId: string) => {
+    setSelectedAudioId(deviceId)
+    if (agoraAudioTrack) {
+      try {
+        await agoraAudioTrack.setDevice(deviceId)
+        const id = `toast-${Date.now()}-${Math.random()}`
+        setToasts((prev) => [...prev, { id, message: 'Microphone switched successfully', type: 'success' }])
+      } catch (err) {
+        console.error('Failed to change microphone device:', err)
+        const id = `toast-${Date.now()}-${Math.random()}`
+        setToasts((prev) => [...prev, { id, message: 'Failed to switch microphone', type: 'error' }])
+      }
+    }
+  }
+
+  const handleFileUpload = async (file: File) => {
+    try {
+      const id = `toast-${Date.now()}-${Math.random()}`
+      setToasts((prev) => [...prev, { id, message: 'Uploading file...', type: 'info' }])
+      
+      const result = await uploadFileToStorage(file, `shared-files/${meetingId}`)
+      await addSharedFile(meetingId, {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        url: result.url,
+        uploadedBy: currentUser.name,
+      })
+    } catch (err) {
+      console.error('File upload failed:', err)
+      const id = `toast-${Date.now()}-${Math.random()}`
+      setToasts((prev) => [...prev, { id, message: 'Failed to upload file', type: 'error' }])
+    }
+  }
+
+  const handleFileDelete = async (fileId: string) => {
+    try {
+      await deleteSharedFile(meetingId, fileId)
+    } catch (err) {
+      console.error('File delete failed:', err)
+    }
+  }
+
+  // Sync refs with state so the cleanup function can access the latest tracks without being re-triggered
+  useEffect(() => { agoraVideoTrackRef.current = agoraVideoTrack }, [agoraVideoTrack])
+  useEffect(() => { agoraAudioTrackRef.current = agoraAudioTrack }, [agoraAudioTrack])
+
   const [remoteParticipants, setRemoteParticipants] = useState<RemoteParticipant[]>([])
   const agoraJoined = useRef(false)
-  // ──────────────────────────────────────────────────────────────────────────
+
   const [meetingDuration, setMeetingDuration] = useState(0)
-  const [speakingQueue, setSpeakingQueue] = useState<string[]>([]) // Array of participant IDs in queue
-  const [showSpeakingQueue, setShowSpeakingQueue] = useState(false)
+  const [speakingQueue, setSpeakingQueue] = useState<string[]>([])
   const [fullscreenParticipant, setFullscreenParticipant] = useState<string | null>(null)
   const [chatMessages, setChatMessages] = useState<Array<{
     id: string
@@ -118,54 +217,51 @@ export default function MeetingRoom({
     message: string
     timestamp: Date
     isSystem?: boolean
-  }>>([
-    {
-      id: '1',
-      sender: 'System',
-      message: `${currentUser.name} started the meeting`,
-      timestamp: new Date(),
-      isSystem: true
-    }
-  ])
+  }>>([])
   const [newMessage, setNewMessage] = useState('')
-  
+  const chatEndRef = useRef<HTMLDivElement>(null)
+
   const videoRef = useRef<HTMLVideoElement>(null)
   const screenShareStreamRef = useRef<MediaStream | null>(null)
-  const [showToolPanel, setShowToolPanel] = useState<'whiteboard' | 'breakoutRooms' | 'screenRecording' | 'virtualBg' | 'waitingRoom' | null>(null)
+  const processingCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const stopProcessingRef = useRef<(() => void) | null>(null)
   const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: 'info' | 'success' | 'warning' | 'error' }>>([])
-  const [mediaError, setMediaError] = useState<string | null>(null)
-  const [showInviteModal, setShowInviteModal] = useState(false)
+
   const [floatingReactions, setFloatingReactions] = useState<Array<{
-    id: string
-    emoji: string
-    x: number
-    y: number
-    variant?: 'burst' | 'spiral' | 'float' | 'bounce'
+    id: string; emoji: string; x: number; y: number; variant?: 'burst' | 'spiral' | 'float' | 'bounce'
   }>>([])
-  const [waitingParticipants, setWaitingParticipants] = useState<WaitingParticipant[]>(() =>
-    currentUser.role === 'faculty'
-      ? selectedStudents.slice(0, Math.min(2, selectedStudents.length)).map((student, index) => ({
-          id: `waiting-${student.id}`,
-          name: student.name,
-          email: student.email,
-          avatar: student.name.charAt(0).toUpperCase(),
-          joinedAt: new Date(Date.now() - (index + 1) * 60000),
-        }))
-      : [],
-  )
 
-  // Virtual background state: listens for selections from the VirtualBackgrounds panel
+  const [waitingParticipants, setWaitingParticipants] = useState<WaitingParticipant[]>([])
+
   const [virtualBg, setVirtualBg] = useState<{ id: string; blur?: number; url?: string }>({ id: 'none' })
-
   const [controlsVisible, setControlsVisible] = useState(true)
   const controlHideTimer = useRef<number | null>(null)
+
+  // Real-time chat subscription
+  useEffect(() => {
+    if (!meetingId) return
+    const unsubscribe = subscribeToChatMessages(meetingId, (messages) => {
+      const formatted = messages.map((msg) => ({
+        id: msg.id,
+        sender: msg.senderName,
+        message: msg.message,
+        timestamp: msg.timestamp,
+        isSystem: msg.senderName === 'System',
+      }))
+      setChatMessages(formatted)
+    })
+    return () => unsubscribe()
+  }, [meetingId])
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chatMessages])
 
   // Initialize camera and microphone
   const initializeMedia = useCallback(async () => {
     try {
-      setMediaError(null)
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      // Ensure tracks reflect current UI state
       stream.getAudioTracks().forEach((t) => (t.enabled = !isMuted))
       stream.getVideoTracks().forEach((t) => (t.enabled = isVideoOn))
 
@@ -189,18 +285,17 @@ export default function MeetingRoom({
         }
       }
 
-      setMediaError(errorMessage)
       const id = `toast-${Date.now()}-${Math.random()}`
       setToasts((prev) => [...prev, { id, message: errorMessage, type: 'error' }])
-      // Developer fallback on localhost: create a fake MediaStream so UI controls can be tested
+      
+      // Local dev fallback
       try {
         if ((typeof window !== 'undefined' && window.location && window.location.hostname.includes('localhost')) || process.env.NODE_ENV === 'development') {
           const fake = createDevMediaStream()
           localStreamRef.current = fake
           setLocalStream(fake)
           if (videoRef.current) videoRef.current.srcObject = fake
-          setToasts((prev) => [...prev, { id: `toast-${Date.now()}-${Math.random()}`, message: 'Using developer fake camera/mic for testing', type: 'info' }])
-          setMediaError(null)
+          setToasts((prev) => [...prev, { id: `toast-${Date.now()}-${Math.random()}`, message: 'Using dev mock camera/mic', type: 'info' }])
           return true
         }
       } catch (e) {
@@ -213,20 +308,18 @@ export default function MeetingRoom({
 
   useEffect(() => {
     initializeMedia()
-
     return () => {
       if (localStreamRef.current) localStreamRef.current.getTracks().forEach((track) => track.stop())
     }
   }, [initializeMedia])
 
-  // ── Agora: join channel on mount, leave on unmount ─────────────────────────
+  // Agora Join/Leave Channel
   useEffect(() => {
     if (!APP_ID || agoraJoined.current) return
     agoraJoined.current = true
 
     const agoraClient = getAgoraClient()
 
-    // Track remote user video/audio
     agoraClient.on('user-published', async (user, mediaType) => {
       await agoraClient.subscribe(user, mediaType)
       setRemoteParticipants((prev) => {
@@ -270,34 +363,69 @@ export default function MeetingRoom({
 
     agoraClient.on('user-left', (user) => {
       setRemoteParticipants((prev) => prev.filter((p) => p.uid !== user.uid))
+      const found = selectedStudents.find(s => s.id === String(user.uid))
+      addToast(`${found ? found.name : `User ${user.uid}`} left the meeting`, 'info')
     })
 
     joinChannel(meetingId, currentUser.id).then(({ localVideoTrack, localAudioTrack }) => {
       if (localVideoTrack) setAgoraVideoTrack(localVideoTrack)
       if (localAudioTrack) setAgoraAudioTrack(localAudioTrack)
+    }).catch((err) => {
+      console.error('[Agora] Failed to join channel:', err)
+      addToast('Failed to connect to video server. Running in mock/offline mode.', 'warning')
     })
 
     return () => {
-      leaveChannel(agoraVideoTrack, agoraAudioTrack)
+      leaveChannel(agoraVideoTrackRef.current, agoraAudioTrackRef.current)
       agoraJoined.current = false
     }
-  }, [agoraVideoTrack, agoraAudioTrack, meetingId, currentUser.id])
-  // ──────────────────────────────────────────────────────────────────────────
+  }, [meetingId, currentUser.id])
+
+  const studentJoinTimesRef = useRef<Record<string, number>>({})
+
+  // Faculty Attendance Tracker
+  useEffect(() => {
+    if (currentUser.role !== 'faculty' || !meetingSessionId) return;
+
+    remoteParticipants.forEach((p) => {
+      const uidStr = String(p.uid);
+      if (!studentJoinTimesRef.current[uidStr]) {
+        studentJoinTimesRef.current[uidStr] = Date.now();
+        recordStudentJoin(meetingSessionId, uidStr, meetingStartedAt || new Date()).catch((err) => {
+          console.error('[Faculty Tracker] Failed to record student join:', err);
+        });
+      }
+    });
+
+    // Clean up any student who is no longer in remoteParticipants
+    Object.keys(studentJoinTimesRef.current).forEach((uidStr) => {
+      const isStillPresent = remoteParticipants.some((p) => String(p.uid) === uidStr);
+      if (!isStillPresent) {
+        const jt = studentJoinTimesRef.current[uidStr];
+        if (jt) {
+          const durSec = Math.round((Date.now() - jt) / 1000);
+          recordStudentLeave(meetingSessionId, uidStr, durSec).catch((err) => {
+            console.error('[Faculty Tracker] Failed to record student leave:', err);
+          });
+        }
+        delete studentJoinTimesRef.current[uidStr];
+      }
+    });
+  }, [remoteParticipants, currentUser.role, meetingSessionId, meetingStartedAt]);
 
   // Meeting duration timer
   useEffect(() => {
     const timer = setInterval(() => {
       setMeetingDuration(prev => prev + 1)
     }, 1000)
-    
     return () => clearInterval(timer)
   }, [])
 
-  // Reveal controls on movement/scroll, then hide after a short delay
+  // Reveal/Hide Controls
   useEffect(() => {
     const scheduleHide = () => {
       if (controlHideTimer.current) window.clearTimeout(controlHideTimer.current)
-      controlHideTimer.current = window.setTimeout(() => setControlsVisible(false), 2200)
+      controlHideTimer.current = window.setTimeout(() => setControlsVisible(false), 3000)
     }
 
     const revealControls = () => {
@@ -318,16 +446,12 @@ export default function MeetingRoom({
     }
   }, [])
 
+  // Listeners for reactions & background pipeline
   useEffect(() => {
     const handleReactionEvent = (event: Event) => {
       const customEvent = event as CustomEvent<{
-        id?: string
-        emoji: string
-        x?: number
-        y?: number
-        variant?: 'burst' | 'spiral' | 'float' | 'bounce'
+        id?: string; emoji: string; x?: number; y?: number; variant?: 'burst' | 'spiral' | 'float' | 'bounce'
       }>
-
       const reaction = {
         id: customEvent.detail?.id || `reaction-${Date.now()}-${Math.random()}`,
         emoji: customEvent.detail?.emoji || '👏',
@@ -335,7 +459,6 @@ export default function MeetingRoom({
         y: customEvent.detail?.y ?? 100,
         variant: customEvent.detail?.variant || 'float',
       }
-
       setFloatingReactions((prev) => [...prev, reaction])
       setTimeout(() => {
         setFloatingReactions((prev) => prev.filter((item) => item.id !== reaction.id))
@@ -357,7 +480,43 @@ export default function MeetingRoom({
     }
   }, [])
 
-  // Format meeting duration
+  // Virtual background pipeline
+  useEffect(() => {
+    import('../services/videoProcessor').then(({ setBackgroundConfig, startStreamProcessing }) => {
+      setBackgroundConfig(virtualBg.id, virtualBg.blur ?? 10, virtualBg.url || null)
+
+      if (!agoraVideoTrack) return
+
+      if (stopProcessingRef.current) {
+        stopProcessingRef.current()
+        stopProcessingRef.current = null
+      }
+
+      if (!processingCanvasRef.current) {
+        processingCanvasRef.current = document.createElement('canvas')
+      }
+
+      const rawStream = localStreamRef.current
+      if (!rawStream) return
+
+      const stop = startStreamProcessing(rawStream, processingCanvasRef.current, (processedTrack) => {
+        agoraVideoTrack.replaceTrack(processedTrack, true).catch(err => {
+          console.error("Failed to replace Agora video track:", err)
+        })
+      })
+
+      stopProcessingRef.current = stop
+    })
+
+    return () => {
+      if (stopProcessingRef.current) {
+        stopProcessingRef.current()
+        stopProcessingRef.current = null
+      }
+    }
+  }, [virtualBg, agoraVideoTrack])
+
+  // Format Duration helper
   const formatDuration = (seconds: number) => {
     const hrs = Math.floor(seconds / 3600)
     const mins = Math.floor((seconds % 3600) / 60)
@@ -367,18 +526,17 @@ export default function MeetingRoom({
       : `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
   }
 
-  // Request to speak functionality
+  // Request to speak
   const requestToSpeak = () => {
-    if (!speakingQueue.includes(currentUser.id)) {
-      setSpeakingQueue(prev => [...prev, currentUser.id])
-      setChatMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        sender: 'System',
-        message: `${currentUser.name} requested to speak`,
-        timestamp: new Date(),
-        isSystem: true
-      }])
-    }
+    if (speakingQueue.includes(currentUser.id)) return
+    setSpeakingQueue(prev => [...prev, currentUser.id])
+    addToast('You requested to speak', 'info')
+    sendChatMessage(meetingId, {
+      senderId: 'System',
+      senderName: 'System',
+      senderRole: 'faculty',
+      message: `${currentUser.name} raised their hand to speak`,
+    }).catch(e => console.error(e))
   }
 
   const removeFromQueue = (participantId: string) => {
@@ -389,9 +547,8 @@ export default function MeetingRoom({
     setSpeakingQueue([])
   }
 
-  // Developer helper: create a fake MediaStream (canvas video + silent audio)
+  // Dev fallback camera stream
   const createDevMediaStream = (): MediaStream => {
-    // video via canvas
     const canvas = document.createElement('canvas')
     canvas.width = 640
     canvas.height = 360
@@ -400,11 +557,11 @@ export default function MeetingRoom({
     const draw = () => {
       ctx.fillStyle = '#0f172a'
       ctx.fillRect(0, 0, canvas.width, canvas.height)
-      ctx.fillStyle = '#0ea5a4'
-      ctx.font = '56px sans-serif'
+      ctx.fillStyle = '#06b6d4'
+      ctx.font = '40px sans-serif'
       ctx.textAlign = 'center'
-      ctx.fillText('Dev Camera', canvas.width / 2, canvas.height / 2)
-      ctx.font = '24px sans-serif'
+      ctx.fillText('Faculty Camera', canvas.width / 2, canvas.height / 2)
+      ctx.font = '20px sans-serif'
       ctx.fillText(`Frame ${frame++}`, canvas.width / 2, canvas.height / 2 + 40)
       requestAnimationFrame(draw)
     }
@@ -412,14 +569,9 @@ export default function MeetingRoom({
 
     const canvasWithCapture = canvas as HTMLCanvasElement & { captureStream?: (fps?: number) => MediaStream }
     const videoStream = canvasWithCapture.captureStream?.(15)
-    if (!videoStream) {
-      throw new Error('Canvas captureStream is not supported in this browser')
-    }
+    if (!videoStream) throw new Error('Canvas captureStream is not supported')
 
-    const AudioContextConstructor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-    if (!AudioContextConstructor) {
-      throw new Error('AudioContext is not supported in this browser')
-    }
+    const AudioContextConstructor = window.AudioContext || (window as any).webkitAudioContext
     const audioCtx = new AudioContextConstructor()
     const oscillator = audioCtx.createOscillator()
     oscillator.frequency.value = 0
@@ -428,7 +580,7 @@ export default function MeetingRoom({
     oscillator.start()
 
     const composed = new MediaStream()
-    videoStream.getVideoTracks().forEach((t: MediaStreamTrack) => composed.addTrack(t))
+    videoStream.getVideoTracks().forEach((t) => composed.addTrack(t))
     dest.stream.getAudioTracks().forEach((t) => composed.addTrack(t))
     return composed
   }
@@ -437,29 +589,6 @@ export default function MeetingRoom({
     const id = `toast-${Date.now()}-${Math.random()}`
     setToasts(prev => [...prev, { id, message, type }])
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3200)
-  }
-
-  const toggleToolPanel = (panel: 'whiteboard' | 'breakoutRooms' | 'screenRecording' | 'virtualBg' | 'waitingRoom') => {
-    setShowToolPanel(prev => prev === panel ? null : panel)
-    setShowParticipants(false)
-    setShowChat(false)
-    setShowSpeakingQueue(false)
-  }
-
-  const admitParticipant = (participantId: string) => {
-    setWaitingParticipants((prev) => prev.filter((participant) => participant.id !== participantId))
-    addToast('Participant admitted to the meeting', 'success')
-  }
-
-  const rejectParticipant = (participantId: string) => {
-    setWaitingParticipants((prev) => prev.filter((participant) => participant.id !== participantId))
-    addToast('Participant removed from waiting room', 'warning')
-  }
-
-  const admitAllParticipants = () => {
-    if (waitingParticipants.length === 0) return
-    setWaitingParticipants([])
-    addToast('All waiting participants admitted', 'success')
   }
 
   const toggleScreenShare = async () => {
@@ -484,7 +613,6 @@ export default function MeetingRoom({
     }
   }
 
-  // Handle video toggle — works for both Agora and fallback MediaStream
   const toggleVideo = () => {
     const newVideoOn = !isVideoOn
     setIsVideoOn(newVideoOn)
@@ -496,7 +624,6 @@ export default function MeetingRoom({
     }
   }
 
-  // Handle mute toggle — works for both Agora and fallback MediaStream
   const toggleMute = () => {
     const newMuted = !isMuted
     setIsMuted(newMuted)
@@ -508,10 +635,16 @@ export default function MeetingRoom({
     }
   }
 
+  const handleEndMeeting = () => {
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop())
+    }
+    onEndMeeting()
+  }
+
+  // Faculty and Student registration filters
   const selectedStudentIds = new Set(selectedStudents.map((student) => student.id))
 
-  // Merge Agora remote participants + selected students into display list
-  // Agora remote users take precedence; fall back to selectedStudents for display names
   const allParticipants: MeetingParticipant[] = [
     {
       id: currentUser.id,
@@ -522,7 +655,6 @@ export default function MeetingRoom({
       isHost: currentUser.role === 'faculty',
       stream: agoraVideoTrack ? undefined : localStream || undefined,
     },
-    // Live Agora remote users
     ...remoteParticipants.map((remote) => {
       const match = selectedStudents.find((s) => s.id === String(remote.uid))
       return {
@@ -534,7 +666,6 @@ export default function MeetingRoom({
         isHost: false,
       }
     }),
-    // Selected students who haven't joined via Agora yet (shown as "waiting")
     ...selectedStudents
       .filter((s) => !remoteParticipants.some((r) => String(r.uid) === s.id))
       .map((student) => ({
@@ -548,910 +679,923 @@ export default function MeetingRoom({
     ...participants,
   ]
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     if (newMessage.trim()) {
-      setChatMessages(prev => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          sender: currentUser.name,
-          message: newMessage.trim(),
-          timestamp: new Date(),
-        },
-      ])
+      const text = newMessage.trim()
       setNewMessage('')
+      try {
+        await sendChatMessage(meetingId, {
+          senderId: currentUser.id,
+          senderName: currentUser.name,
+          senderRole: currentUser.role,
+          message: text,
+        })
+      } catch (err) {
+        console.error("Failed to send chat message", err)
+      }
     }
   }
 
-  const handleEndMeeting = () => {
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop())
-    }
-    onEndMeeting()
+  const handleToggleLock = () => {
+    const nextLockState = !isLocked
+    setIsLocked(nextLockState)
+    addToast(nextLockState ? 'Meeting locked. New students cannot enter.' : 'Meeting unlocked.', 'info')
+  }
+
+  const exportAttendance = () => {
+    const reportText = [
+      `Attendance Log: ${meetingTitle}`,
+      `Meeting ID: ${meetingId}`,
+      `Date: ${new Date().toLocaleDateString()}`,
+      '---------------------------------------',
+      ...allParticipants.map((p) => {
+        const present = attendanceMap[p.id] || p.id === currentUser.id
+        return `${p.name} (${p.email}) - ${present ? 'Present' : 'Absent'}`
+      })
+    ].join('\n')
+
+    const blob = new Blob([reportText], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${meetingTitle.replace(/\s+/g, '_')}_attendance.txt`
+    link.click()
+    URL.revokeObjectURL(url)
+    addToast('Attendance exported successfully', 'success')
+  }
+
+  const toggleRecording = () => {
+    const nextRec = !isRecording
+    setIsRecording(nextRec)
+    addToast(nextRec ? 'Recording started' : 'Recording stopped', nextRec ? 'success' : 'info')
+    sendChatMessage(meetingId, {
+      senderId: 'System',
+      senderName: 'System',
+      senderRole: 'faculty',
+      message: nextRec ? 'Meeting recording started' : 'Meeting recording stopped',
+    }).catch(e => console.error(e))
+  }
+
+  const admitParticipant = (id: string) => {
+    setWaitingParticipants(prev => prev.filter(p => p.id !== id))
+    addToast('Participant admitted to meeting', 'success')
+  }
+
+  const rejectParticipant = (id: string) => {
+    setWaitingParticipants(prev => prev.filter(p => p.id !== id))
+    addToast('Participant admission declined', 'warning')
+  }
+
+  const admitAllParticipants = () => {
+    setWaitingParticipants([])
+    addToast('All waiting participants admitted', 'success')
+  }
+
+  const handleCopyInviteLink = () => {
+    const text = `Join Meeting: ${meetingTitle}\nLink: ${window.location.origin}/student/join-meeting\nCode: ${meetingId}`
+    navigator.clipboard.writeText(text).then(() => {
+      addToast('Invitation details copied to clipboard', 'success')
+    }).catch(() => {
+      addToast('Failed to copy invitation details', 'error')
+    })
+  }
+
+  // Layout calculations
+  const isSharingOrWhiteboardActive = isScreenSharing || showWhiteboard
+
+  const getGridColsClass = (count: number) => {
+    if (count <= 1) return 'grid-cols-1'
+    if (count <= 4) return 'grid-cols-2'
+    if (count <= 6) return 'grid-cols-2 md:grid-cols-3'
+    return 'grid-cols-3 md:grid-cols-4'
   }
 
   return (
-    <div className="fixed inset-0 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 z-50 flex flex-col">
-      {/* Enhanced Header */}
-      <div className="flex items-center justify-between p-4 bg-slate-900/80 backdrop-blur-sm border-b border-white/10">
+    <div className="fixed inset-0 bg-slate-950 text-slate-200 z-50 flex flex-col overflow-hidden font-sans select-none">
+      {/* 1. minimal top bar */}
+      <header className="flex items-center justify-between px-6 py-3.5 bg-slate-900/30 border-b border-white/5 backdrop-blur-md z-20 flex-shrink-0">
+        {/* Left Info */}
         <div className="flex items-center gap-4">
-          <div>
-            <h1 className="text-xl font-semibold text-white flex items-center gap-2">
-              {meetingTitle}
-              {currentUser.role === 'faculty' && (
-                <div title="Host">
-                  <Shield className="w-4 h-4 text-emerald-400" />
-                </div>
-              )}
-            </h1>
-            <div className="flex items-center gap-4 text-sm text-slate-400 mt-1">
-              <span>ID: {meetingId.slice(-8)}</span>
-              <div className="flex items-center gap-1">
-                <Clock className="w-3 h-3" />
-                <span>{formatDuration(meetingDuration)}</span>
-              </div>
-              <div className="flex items-center gap-1 px-2 py-1 bg-red-500/20 rounded-md">
-                <Circle className="w-2 h-2 text-red-400 fill-current animate-pulse" />
-                <span className="text-red-300 text-xs font-medium">
-                  {isRecording ? 'Recording' : 'Live'}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          {/* Meeting Controls */}
-          <button
-            onClick={() => {
-              setShowInviteModal(true)
-              onInviteParticipants?.()
-            }}
-            className="flex items-center gap-2 px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-400/30 rounded-lg text-blue-300 text-sm font-medium transition-colors"
-            title="Invite participants"
-          >
-            <Copy className="w-4 h-4" />
-            Invite
-          </button>
-          
-
-          
-          <button
-            onClick={() => { setShowParticipants(!showParticipants); setShowToolPanel(null); }}
-            className={`relative p-2 rounded-lg transition-colors ${
-              showParticipants 
-                ? 'bg-blue-500/20 text-blue-300 border border-blue-400/30' 
-                : 'hover:bg-white/10 text-slate-300 hover:text-white'
-            }`}
-            title="Participants"
-          >
-            <Users className="w-5 h-5" />
-            <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-              {allParticipants.length}
-            </span>
-          </button>
-          
-          <button
-            onClick={() => { setShowChat(!showChat); setShowToolPanel(null); }}
-            className={`relative p-2 rounded-lg transition-colors ${
-              showChat 
-                ? 'bg-green-500/20 text-green-300 border border-green-400/30' 
-                : 'hover:bg-white/10 text-slate-300 hover:text-white'
-            }`}
-            title="Chat"
-          >
-            <MessageSquare className="w-5 h-5" />
-            {chatMessages.filter(m => !m.isSystem).length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-green-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                {chatMessages.filter(m => !m.isSystem).length}
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-white truncate max-w-[150px] sm:max-w-xs">{meetingTitle}</span>
+            {currentUser.role === 'faculty' && (
+              <span className="px-2 py-0.5 text-[10px] bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 font-bold uppercase rounded-md flex items-center gap-1">
+                <Shield className="w-3 h-3" /> Host
               </span>
             )}
-          </button>
-
-          {/* Tool Panel Buttons */}
-          <button
-            onClick={() => toggleToolPanel('whiteboard')}
-            className={`p-2 rounded-lg transition-colors ${
-              showToolPanel === 'whiteboard'
-                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-400/30'
-                : 'hover:bg-white/10 text-slate-300 hover:text-white'
-            }`}
-            title="Whiteboard"
-          >
-            <Pencil className="w-5 h-5" />
-          </button>
-
-          <button
-            onClick={() => toggleToolPanel('breakoutRooms')}
-            className={`p-2 rounded-lg transition-colors ${
-              showToolPanel === 'breakoutRooms'
-                ? 'bg-orange-500/20 text-orange-300 border border-orange-400/30'
-                : 'hover:bg-white/10 text-slate-300 hover:text-white'
-            }`}
-            title="Breakout Rooms"
-          >
-            <LayoutGrid className="w-5 h-5" />
-          </button>
-
-          <button
-            onClick={() => toggleToolPanel('screenRecording')}
-            className={`p-2 rounded-lg transition-colors ${
-              showToolPanel === 'screenRecording'
-                ? 'bg-red-500/20 text-red-300 border border-red-400/30'
-                : 'hover:bg-white/10 text-slate-300 hover:text-white'
-            }`}
-            title="Recording Panel"
-          >
-            <Film className="w-5 h-5" />
-          </button>
-
-          <button
-            onClick={() => toggleToolPanel('virtualBg')}
-            className={`p-2 rounded-lg transition-colors ${
-              showToolPanel === 'virtualBg'
-                ? 'bg-purple-500/20 text-purple-300 border border-purple-400/30'
-                : 'hover:bg-white/10 text-slate-300 hover:text-white'
-            }`}
-            title="Virtual Backgrounds"
-          >
-            <Layers className="w-5 h-5" />
-          </button>
-
-          {currentUser.role === 'faculty' && (
-            <button
-              onClick={() => toggleToolPanel('waitingRoom')}
-              className={`p-2 rounded-lg transition-colors ${
-                showToolPanel === 'waitingRoom'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-400/30'
-                  : 'hover:bg-white/10 text-slate-300 hover:text-white'
-              }`}
-              title="Waiting Room"
-            >
-              <Bell className="w-5 h-5" />
-            </button>
+          </div>
+          <div className="h-4 w-px bg-white/10" />
+          <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
+            <Clock className="w-3.5 h-3.5 text-slate-400" />
+            <span>{formatDuration(meetingDuration)}</span>
+          </div>
+          {isRecording && (
+            <div className="flex items-center gap-1 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded text-[10px] text-red-400 font-bold uppercase tracking-wider animate-pulse">
+              <span className="h-1.5 w-1.5 rounded-full bg-red-400 fill-current" />
+              Rec
+            </div>
           )}
+        </div>
 
-          <div className="relative">
-            <button
-              onClick={() => setShowSettings(!showSettings)}
-              className="p-2 hover:bg-white/10 rounded-lg text-slate-300 hover:text-white transition-colors"
-              title="More options"
-            >
-              <MoreHorizontal className="w-5 h-5" />
-            </button>
-            
-            {showSettings && (
-              <div className="absolute top-12 right-0 bg-slate-800/95 backdrop-blur-sm border border-white/10 rounded-xl p-2 min-w-48 shadow-xl z-50">
-                <button
-                  onClick={() => setIsFullscreen(!isFullscreen)}
-                  className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-colors"
-                >
-                  {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-                  {isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-                </button>
-                <button
-                  onClick={toggleScreenShare}
-                  className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-colors"
-                >
-                  <Share2 className="w-4 h-4" />
-                  {isScreenSharing ? 'Stop sharing' : 'Share screen'}
-                </button>
-                <button className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-colors">
-                  <Camera className="w-4 h-4" />
-                  Camera settings
-                </button>
+        {/* Right Info */}
+        <div className="flex items-center gap-5 text-sm">
+          {/* Connection */}
+          <div className="hidden sm:flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-xs text-slate-400 font-medium">Excellent Connection</span>
+          </div>
+          <div className="hidden sm:block h-4 w-px bg-white/10" />
+          
+          {/* Code */}
+          <span
+            onClick={handleCopyInviteLink}
+            className="text-xs text-slate-400 hover:text-white font-mono cursor-pointer transition-colors border border-white/5 bg-slate-900/50 px-2.5 py-1 rounded-md"
+            title="Click to copy details"
+          >
+            {meetingId.slice(0, 3)}-{meetingId.slice(3, 7)}-{meetingId.slice(7, 10)}
+          </span>
+
+          {/* Participant count */}
+          <div className="flex items-center gap-1.5 text-xs text-slate-300 font-semibold bg-slate-800/40 px-2.5 py-1 rounded-md">
+            <Users className="w-4 h-4 text-cyan-400" />
+            <span>{allParticipants.length}</span>
+          </div>
+        </div>
+      </header>
+
+      {/* 2. Main content block */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Main interactive stage */}
+        <div className="flex-1 flex flex-col md:flex-row p-4 gap-4 overflow-hidden relative min-w-0">
+          
+          {/* Main Visual element */}
+          <div className="flex-1 flex flex-col justify-center items-center relative overflow-hidden bg-slate-900/20 rounded-2xl border border-white/5">
+            {showWhiteboard ? (
+              <div className="w-full h-full flex flex-col overflow-hidden bg-slate-900 rounded-2xl relative p-2">
+                <div className="absolute top-4 right-4 z-10 flex gap-2">
+                  <button
+                    onClick={() => setShowWhiteboard(false)}
+                    className="p-2 rounded-lg bg-black/60 hover:bg-black/80 text-white transition-colors"
+                    title="Close Whiteboard"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <Whiteboard onToast={addToast} meetingId={meetingId} currentUser={currentUser} />
+              </div>
+            ) : isScreenSharing ? (
+              <div className="w-full h-full relative flex items-center justify-center bg-slate-950 rounded-2xl overflow-hidden border border-white/10">
+                <video
+                  ref={(el) => {
+                    if (el && screenShareStreamRef.current) {
+                      el.srcObject = screenShareStreamRef.current
+                      el.play().catch(err => console.error(err))
+                    }
+                  }}
+                  autoPlay
+                  playsInline
+                  className="w-full h-full object-contain"
+                />
+                <div className="absolute bottom-4 left-4 bg-black/60 text-white px-3 py-1.5 rounded-lg text-xs font-semibold backdrop-blur-sm">
+                  You are sharing your screen
+                </div>
+              </div>
+            ) : (
+              // Normal Fullscreen Participant Grid
+              <div className={`w-full h-full grid gap-4 p-2 items-center justify-center overflow-y-auto ${
+                fullscreenParticipant ? 'grid-cols-1' : getGridColsClass(allParticipants.length)
+              }`}>
+                {(fullscreenParticipant ? allParticipants.filter(p => p.id === fullscreenParticipant) : allParticipants).map((participant) => {
+                  const queuePosition = speakingQueue.indexOf(participant.id)
+                  const isInQueue = queuePosition !== -1
+                  const isSpeaking = !participant.isMuted && (isInQueue || Math.random() > 0.8) // Simple prototype animation fallback
+                  
+                  return (
+                    <div
+                      key={participant.id}
+                      onClick={() => !fullscreenParticipant && setFullscreenParticipant(participant.id)}
+                      className={`relative rounded-2xl overflow-hidden bg-slate-900 aspect-video w-full h-full flex items-center justify-center border border-white/5 transition-all duration-300 ${
+                        fullscreenParticipant ? 'max-w-4xl mx-auto shadow-2xl' : 'hover:scale-[1.01]'
+                      } ${
+                        isSpeaking ? 'ring-2 ring-emerald-500 shadow-lg shadow-emerald-500/10' : ''
+                      } ${
+                        isInQueue ? 'ring-2 ring-yellow-400' : ''
+                      }`}
+                    >
+                      {participant.isVideoOn ? (
+                        <div className="w-full h-full relative">
+                          {participant.id === currentUser.id ? (
+                            <div className="w-full h-full relative">
+                              {virtualBg.id && virtualBg.id !== 'none' && virtualBg.id !== 'blur' && (
+                                <div
+                                  className="absolute inset-0 bg-cover bg-center"
+                                  style={{
+                                    backgroundImage: virtualBg.id === 'custom' ? `url(${virtualBg.url})` : undefined,
+                                    background: virtualBg.id !== 'custom' ? (
+                                      virtualBg.id === 'office' ? 'linear-gradient(135deg,#0f172a 0%,#0b1220 100%)' :
+                                      virtualBg.id === 'nature' ? 'linear-gradient(135deg,#065f46 0%,#0b3b6b 100%)' :
+                                      virtualBg.id === 'abstract' ? 'linear-gradient(135deg,#6d28d9 0%,#be185d 100%)' :
+                                      virtualBg.id === 'space' ? 'linear-gradient(135deg,#0f172a 0%,#1e1b4b 100%)' :
+                                      undefined
+                                    ) : undefined,
+                                  }}
+                                />
+                              )}
+                              <AgoraVideoTile
+                                localVideoTrack={agoraVideoTrack ?? undefined}
+                                fallbackStream={!agoraVideoTrack ? (participant.stream ?? null) : null}
+                                className={`scale-x-[-1] relative z-10 ${virtualBg.id === 'blur' ? `blur-[${virtualBg.blur ?? 8}px]` : ''}`}
+                              />
+                            </div>
+                          ) : (
+                            (() => {
+                              const remote = remoteParticipants.find((r) => String(r.uid) === participant.id)
+                              return remote?.videoTrack ? (
+                                <AgoraVideoTile remoteVideoTrack={remote.videoTrack} />
+                              ) : (
+                                <div className="w-full h-full bg-gradient-to-br from-slate-800 to-slate-950 flex items-center justify-center">
+                                  <div className="w-20 h-20 rounded-full bg-slate-800 border border-white/10 flex items-center justify-center font-bold text-2xl text-slate-300">
+                                    {participant.name.charAt(0).toUpperCase()}
+                                  </div>
+                                </div>
+                              )
+                            })()
+                          )}
+                        </div>
+                      ) : (
+                        <div className="w-full h-full bg-slate-900/60 flex items-center justify-center">
+                          <div className="w-20 h-20 rounded-full bg-slate-800 border border-white/10 flex items-center justify-center font-bold text-2xl text-slate-300">
+                            {participant.name.charAt(0).toUpperCase()}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Header overlay info */}
+                      {fullscreenParticipant && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setFullscreenParticipant(null)
+                          }}
+                          className="absolute top-4 right-4 p-2 bg-black/60 rounded-lg hover:bg-black/80 text-white z-10 transition-colors"
+                          title="Restore Grid"
+                        >
+                          <Minimize className="w-4 h-4" />
+                        </button>
+                      )}
+
+                      {/* Name tag and state indicators */}
+                      <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between z-10">
+                        <span className="px-2.5 py-1 bg-black/60 backdrop-blur-sm rounded-lg text-xs font-semibold text-white tracking-wide border border-white/5">
+                          {participant.name}
+                          {participant.isHost && ' (Host)'}
+                          {participant.id === currentUser.id && ' (You)'}
+                        </span>
+
+                        <div className="flex gap-1.5">
+                          {isInQueue && (
+                            <span className="p-1 rounded-full bg-yellow-500 text-black shadow-lg" title="Speaking queue">
+                              <Hand className="w-3.5 h-3.5" />
+                            </span>
+                          )}
+                          {!participant.isMuted ? (
+                            <span className="p-1 rounded-full bg-emerald-500 text-white shadow-lg">
+                              <Mic className="w-3.5 h-3.5" />
+                            </span>
+                          ) : (
+                            <span className="p-1 rounded-full bg-red-500/80 text-white shadow-lg">
+                              <MicOff className="w-3.5 h-3.5" />
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
-        </div>
-      </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Videos/Main Area - Flexible width based on whiteboard state */}
-        <div className={`${showToolPanel === 'whiteboard' ? 'w-64 sm:w-72' : 'flex-1'} p-4 relative border-r border-white/10 transition-all duration-300`}>
-          {/* Screen sharing indicator */}
-          {isScreenSharing && (
-            <div className="absolute top-6 left-1/2 transform -translate-x-1/2 bg-blue-500/90 text-white px-4 py-2 rounded-lg text-sm font-medium z-10 backdrop-blur-sm">
-              You are sharing your screen
-            </div>
-          )}
-          
-          <div className={`h-full ${fullscreenParticipant ? 'grid grid-cols-1' : viewMode === 'grid' ? 'grid gap-3' : 'flex flex-col gap-4'} ${
-            fullscreenParticipant ? '' :
-            showToolPanel === 'whiteboard' ? 'grid-cols-1' :
-            allParticipants.length <= 1 ? 'grid-cols-1' :
-            allParticipants.length <= 4 ? 'grid-cols-2' :
-            allParticipants.length <= 6 ? 'grid-cols-2 md:grid-cols-3' :
-            allParticipants.length <= 9 ? 'grid-cols-3' :
-            'grid-cols-3 md:grid-cols-4'
-          }`}>
-            {(fullscreenParticipant ? allParticipants.filter(p => p.id === fullscreenParticipant) : allParticipants).map((participant, index) => {
-              const queuePosition = speakingQueue.indexOf(participant.id)
-              const isInQueue = queuePosition !== -1
-              
-              return (
-                <div
-                  className={`relative bg-slate-900 rounded-lg overflow-hidden ${
-                    fullscreenParticipant ? 'h-full' : 
-                    showToolPanel === 'whiteboard' ? 'aspect-video' :
-                    viewMode === 'speaker' && index === 0 ? 'flex-1' : viewMode === 'speaker' && index > 0 ? 'h-24 flex-shrink-0' : ''
-                  } group hover:ring-2 hover:ring-blue-400/50 transition-all duration-200 cursor-pointer ${
-                    participant.isHost ? 'ring-1 ring-emerald-400/30' : ''
-                  } ${isInQueue ? 'ring-2 ring-yellow-400/60 animate-pulse' : ''}`}
-                  onClick={() => !fullscreenParticipant && setFullscreenParticipant(participant.id)}
-                >
-                  {participant.isVideoOn ? (
-                    <div className="w-full h-full relative">
-                      {participant.id === currentUser.id ? (
-                        <div className="w-full h-full relative">
-                          {/* Virtual background layer */}
-                          {virtualBg.id && virtualBg.id !== 'none' && virtualBg.id !== 'blur' && (
-                            <div
-                              className="absolute inset-0 bg-cover bg-center"
-                              style={{
-                                backgroundImage: virtualBg.id === 'custom' ? `url(${virtualBg.url})` : undefined,
-                                background: virtualBg.id !== 'custom' ? (
-                                  virtualBg.id === 'office' ? 'linear-gradient(135deg,#0f172a 0%,#0b1220 100%)' :
-                                  virtualBg.id === 'nature' ? 'linear-gradient(135deg,#065f46 0%,#0b3b6b 100%)' :
-                                  virtualBg.id === 'abstract' ? 'linear-gradient(135deg,#6d28d9 0%,#be185d 100%)' :
-                                  virtualBg.id === 'space' ? 'linear-gradient(135deg,#0f172a 0%,#1e1b4b 100%)' :
-                                  undefined
-                                ) : undefined,
-                              }}
-                            />
-                          )}
-                          {/* Local video: Agora track or MediaStream fallback */}
+          {/* 3. Participant strip (Vertical/Horizontal sidebar if Whiteboard/Sharing is active) */}
+          {isSharingOrWhiteboardActive && (
+            <div className="w-full md:w-64 flex flex-row md:flex-col gap-3 p-1 overflow-x-auto md:overflow-y-auto md:max-h-[calc(100vh-160px)] flex-shrink-0">
+              {allParticipants.map((p) => {
+                const queuePosition = speakingQueue.indexOf(p.id)
+                const isInQueue = queuePosition !== -1
+                return (
+                  <div
+                    key={p.id}
+                    className={`relative rounded-xl overflow-hidden aspect-video bg-slate-900 border border-white/5 w-28 md:w-full flex-shrink-0 flex items-center justify-center ${
+                      isInQueue ? 'ring-2 ring-yellow-400' : ''
+                    }`}
+                  >
+                    {p.isVideoOn ? (
+                      <div className="w-full h-full relative">
+                        {p.id === currentUser.id ? (
                           <AgoraVideoTile
                             localVideoTrack={agoraVideoTrack ?? undefined}
-                            fallbackStream={!agoraVideoTrack ? (participant.stream ?? null) : null}
-                            className={`scale-x-[-1] relative z-10 ${virtualBg.id === 'blur' ? `blur-[${virtualBg.blur ?? 8}px]` : ''}`}
+                            fallbackStream={!agoraVideoTrack ? (p.stream ?? null) : null}
+                            className="scale-x-[-1]"
                           />
-                        </div>
-                      ) : (
-                        // Remote participant: use live Agora track if available
-                        (() => {
-                          const remote = remoteParticipants.find((r) => String(r.uid) === participant.id)
-                          return remote?.videoTrack ? (
-                            <AgoraVideoTile remoteVideoTrack={remote.videoTrack} />
-                          ) : (
-                            <div className="w-full h-full bg-gradient-to-br from-slate-700 via-slate-800 to-slate-900 flex items-center justify-center relative">
-                              <div className={`rounded-full bg-slate-600/80 flex items-center justify-center backdrop-blur-sm border border-slate-500/50 ${
-                                fullscreenParticipant ? 'w-32 h-32' : 'w-16 h-16 md:w-20 md:h-20'
-                              }`}>
-                                <span className={`font-bold text-slate-200 ${
-                                  fullscreenParticipant ? 'text-4xl' : 'text-xl md:text-2xl'
-                                }`}>
-                                  {participant.name.charAt(0).toUpperCase()}
-                                </span>
-                              </div>
-                            </div>
-                          )
-                        })()
-                      )}
-                    </div>
-                  ) : (
-                    <div className="w-full h-full bg-slate-800 flex items-center justify-center relative">
-                      <div className="text-center">
-                        <div className={`rounded-full bg-slate-700 flex items-center justify-center mx-auto mb-3 ${
-                          fullscreenParticipant ? 'w-32 h-32' : 'w-16 h-16 md:w-20 md:h-20'
-                        }`}>
-                          <span className={`font-bold text-slate-300 ${
-                            fullscreenParticipant ? 'text-4xl' : 'text-xl md:text-2xl'
-                          }`}>
-                            {participant.name.charAt(0).toUpperCase()}
-                          </span>
-                        </div>
-                        <VideoOff className={`text-slate-400 mx-auto mb-2 ${
-                          fullscreenParticipant ? 'w-8 h-8' : 'w-6 h-6'
-                        }`} />
-                        <span className={`text-slate-400 ${
-                          fullscreenParticipant ? 'text-base' : 'text-sm'
-                        }`}>Camera is off</span>
-                      </div>
-                    </div>
-                  )}
-
-                {/* Queue Number Badge */}
-                {isInQueue && (
-                  <div className="absolute top-3 right-3 w-8 h-8 bg-yellow-500 text-white rounded-full flex items-center justify-center font-bold text-sm shadow-lg">
-                    #{queuePosition + 1}
-                  </div>
-                )}
-
-                {/* Fullscreen controls */}
-                {fullscreenParticipant && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setFullscreenParticipant(null)
-                    }}
-                    className="absolute top-4 right-4 p-3 bg-black/60 rounded-lg hover:bg-black/80 text-white transition-colors"
-                  >
-                    <Minimize className="w-5 h-5" />
-                  </button>
-                )}
-
-                {/* Enhanced Participant Info */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-white font-medium ${
-                        fullscreenParticipant ? 'text-lg' : 'text-sm'
-                      }`}>
-                        {participant.name}
-                        {participant.isHost && ' (Host)'}
-                        {participant.id === currentUser.id && ' (You)'}
-                      </span>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      {/* Connection quality indicator */}
-                      <div className="flex gap-1">
-                        <div className="w-1 h-3 bg-green-400 rounded-full"></div>
-                        <div className="w-1 h-2 bg-green-400 rounded-full"></div>
-                        <div className="w-1 h-1 bg-slate-400 rounded-full"></div>
-                      </div>
-                      
-                      {/* Audio indicator */}
-                      {!participant.isMuted ? (
-                        <div className={`bg-green-500/80 rounded-full flex items-center justify-center ${
-                          fullscreenParticipant ? 'w-8 h-8' : 'w-6 h-6'
-                        }`}>
-                          <Mic className={`text-white ${
-                            fullscreenParticipant ? 'w-4 h-4' : 'w-3 h-3'
-                          }`} />
-                        </div>
-                      ) : (
-                        <div className={`bg-red-500/80 rounded-full flex items-center justify-center ${
-                          fullscreenParticipant ? 'w-8 h-8' : 'w-6 h-6'
-                        }`}>
-                          <MicOff className={`text-white ${
-                            fullscreenParticipant ? 'w-4 h-4' : 'w-3 h-3'
-                          }`} />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )})}
-
-            {mediaError && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/40 p-6">
-                <div className="bg-slate-900/95 text-slate-100 rounded-xl p-6 max-w-md text-center">
-                  <p className="mb-4 font-semibold">{mediaError}</p>
-                  <div className="flex gap-2 justify-center">
-                    <button
-                      onClick={() => initializeMedia()}
-                      className="px-4 py-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/30 text-emerald-200"
-                    >
-                      Retry
-                    </button>
-                    <button
-                      onClick={() => window.open('https://support.google.com/chrome/answer/2693767', '_blank')}
-                      className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white"
-                    >
-                      How to allow access
-                    </button>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-3">If using Windows, also check OS privacy settings: Settings → Privacy & security → Camera / Microphone.</p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Tool Panel / Participants / Chat - Flexible width based on whiteboard state */}
-        {(showParticipants || showChat || (currentUser.role === 'faculty' && showSpeakingQueue) || showToolPanel !== null) && (
-          <div className={`${showToolPanel === 'whiteboard' ? 'flex-1' : 'w-72 sm:w-80 md:w-96'} bg-slate-900/90 backdrop-blur-sm border-l border-white/10 flex flex-col transition-all duration-300`}>
-            {/* Tab Headers */}
-            <div className="flex border-b border-white/10">
-              {showParticipants && (
-                <button
-                  onClick={() => { setShowParticipants(true); setShowChat(false); setShowSpeakingQueue(false); }}
-                  className={`flex-1 p-3 text-sm font-medium transition-colors ${
-                    showParticipants && !showChat && !showSpeakingQueue
-                      ? 'text-white border-b-2 border-blue-400 bg-blue-500/10' 
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Participants ({allParticipants.length})
-                </button>
-              )}
-              {showChat && (
-                <button
-                  onClick={() => { setShowChat(true); setShowParticipants(false); setShowSpeakingQueue(false); }}
-                  className={`flex-1 p-3 text-sm font-medium transition-colors ${
-                    showChat && !showParticipants && !showSpeakingQueue
-                      ? 'text-white border-b-2 border-green-400 bg-green-500/10' 
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Chat ({chatMessages.filter(m => !m.isSystem).length})
-                </button>
-              )}
-              {currentUser.role === 'faculty' && speakingQueue.length > 0 && (
-                <button
-                  onClick={() => { setShowSpeakingQueue(true); setShowParticipants(false); setShowChat(false); }}
-                  className={`flex-1 p-3 text-sm font-medium transition-colors relative ${
-                    showSpeakingQueue && !showParticipants && !showChat
-                      ? 'text-white border-b-2 border-yellow-400 bg-yellow-500/10' 
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Speaking Queue ({speakingQueue.length})
-                  <div className="absolute -top-1 -right-1 w-4 h-4 bg-yellow-500 rounded-full flex items-center justify-center text-xs text-black font-bold animate-pulse">
-                    {speakingQueue.length}
-                  </div>
-                </button>
-              )}
-              {showToolPanel !== null && !showParticipants && !showChat && (
-                <button
-                  className="flex-1 p-3 text-sm font-medium text-white border-b-2 border-indigo-400 bg-indigo-500/10 flex items-center justify-center gap-2"
-                >
-                  {showToolPanel === 'whiteboard' && <><Pencil className="w-4 h-4" /> Whiteboard</>}
-                  {showToolPanel === 'breakoutRooms' && <><LayoutGrid className="w-4 h-4" /> Breakout Rooms</>}
-                  {showToolPanel === 'screenRecording' && <><Film className="w-4 h-4" /> Recording</>}
-                  {showToolPanel === 'virtualBg' && <><Layers className="w-4 h-4" /> Virtual BG</>}
-                  {showToolPanel === 'waitingRoom' && <><Bell className="w-4 h-4" /> Waiting Room</>}
-                </button>
-              )}
-            </div>
-
-            {/* Speaking Queue Panel (Faculty only) */}
-            {currentUser.role === 'faculty' && showSpeakingQueue && (
-              <div className="flex-1 flex flex-col p-4">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-white">Speaking Queue</h3>
-                  <button
-                    onClick={clearSpeakingQueue}
-                    className="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-xs font-medium transition-colors"
-                  >
-                    Clear All
-                  </button>
-                </div>
-                
-                {speakingQueue.length === 0 ? (
-                  <div className="text-center text-slate-400 mt-8">
-                    <Hand className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p className="text-sm">No speaking requests</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2 flex-1 overflow-y-auto">
-                    {speakingQueue.map((participantId, index) => {
-                      const participant = allParticipants.find(p => p.id === participantId)
-                      if (!participant) return null
-                      
-                      return (
-                        <div key={participantId} className="flex items-center justify-between p-3 rounded-lg bg-yellow-500/10 border border-yellow-400/20">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-yellow-500 text-black rounded-full flex items-center justify-center font-bold text-sm">
-                              #{index + 1}
-                            </div>
-                            <div>
-                              <div className="text-sm font-medium text-white">{participant.name}</div>
-                              <div className="text-xs text-slate-400">Waiting to speak</div>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => removeFromQueue(participantId)}
-                            className="px-2 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-xs transition-colors"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {showParticipants && (
-              <div className="flex-1 flex flex-col p-4">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-white">In this meeting</h3>
-                  <button
-                    className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white"
-                    title="Invite more people"
-                  >
-                    <UserPlus className="w-4 h-4" />
-                  </button>
-                </div>
-                
-                <div className="space-y-2 flex-1 overflow-y-auto">
-                  {allParticipants
-                    .sort((a, b) => {
-                      if (a.isHost && !b.isHost) return -1;
-                      if (!a.isHost && b.isHost) return 1;
-                      if (a.id === currentUser.id) return -1;
-                      if (b.id === currentUser.id) return 1;
-                      return 0;
-                    })
-                    .map((participant) => {
-                      const queuePosition = speakingQueue.indexOf(participant.id)
-                      const isInQueue = queuePosition !== -1
-                      const isStudentParticipant = selectedStudentIds.has(participant.id)
-                      const isMarkedAttended = attendanceMap[participant.id] || false
-                      
-                      return (
-                      <div 
-                        key={participant.id} 
-                        className={`flex items-center justify-between p-3 rounded-lg min-w-0 hover:bg-white/5 transition-colors group cursor-pointer ${
-                          isInQueue ? 'bg-yellow-500/10 border border-yellow-400/30' : ''
-                        }`}
-                        onClick={() => setFullscreenParticipant(participant.id)}
-                      >
-                        <div className="flex items-center gap-3 flex-1">
-                          <div className="relative">
-                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-                              <span className="text-sm font-bold text-white">
-                                {participant.name.charAt(0).toUpperCase()}
-                              </span>
-                            </div>
-                            {participant.isVideoOn && (
-                              <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full border border-slate-900"></div>
-                            )}
-                            {isInQueue && (
-                              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-yellow-500 text-black rounded-full flex items-center justify-center text-xs font-bold">
-                                {queuePosition + 1}
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-medium text-white flex items-center gap-2">
-                              {participant.name}
-                              {participant.isHost && (
-                                <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 text-xs rounded border border-emerald-400/30">
-                                  Host
-                                </span>
-                              )}
-                              {participant.id === currentUser.id && (
-                                <span className="text-xs text-slate-400">(You)</span>
-                              )}
-                              {isInQueue && (
-                                <span className="px-1.5 py-0.5 bg-yellow-500/20 text-yellow-300 text-xs rounded border border-yellow-400/30">
-                                  Wants to speak
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-xs text-slate-400 truncate">{participant.email}</div>
-                          </div>
-                        </div>
-                        
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          {/* Audio/Video Status */}
-                          <div className="flex items-center gap-1">
-                            {!participant.isMuted ? (
-                              <div className="p-1 bg-green-500/20 rounded">
-                                <Mic className="w-3 h-3 text-green-400" />
-                              </div>
-                            ) : (
-                              <div className="p-1 bg-red-500/20 rounded">
-                                <MicOff className="w-3 h-3 text-red-400" />
-                              </div>
-                            )}
-                            {participant.isVideoOn ? (
-                              <div className="p-1 bg-green-500/20 rounded">
-                                <Video className="w-3 h-3 text-green-400" />
-                              </div>
-                            ) : (
-                              <div className="p-1 bg-red-500/20 rounded">
-                                <VideoOff className="w-3 h-3 text-red-400" />
-                              </div>
-                            )}
-                          </div>
-                          
-                          {/* More options for host */}
-                          {currentUser.role === 'faculty' && participant.id !== currentUser.id && (
-                            <div className="flex items-center gap-1">
-                              {isStudentParticipant && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    onToggleAttendance?.(participant.id)
-                                  }}
-                                  className={`px-2 py-1 rounded text-[10px] font-semibold border transition-all ${
-                                    isMarkedAttended
-                                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
-                                      : 'bg-rose-500/20 text-rose-300 border-rose-400/30'
-                                  }`}
-                                  title={isMarkedAttended ? 'Marked attended - click to mark absent' : 'Marked absent - click to mark attended'}
-                                >
-                                  {isMarkedAttended ? 'Attended' : 'Absent'}
-                                </button>
-                              )}
-                              <button 
-                                className="p-1 opacity-0 group-hover:opacity-100 hover:bg-white/10 rounded text-slate-400 hover:text-white transition-all"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <MoreHorizontal className="w-3 h-3" />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )})}
-                </div>
-              </div>
-            )}
-
-            {showChat && (
-              <div className="flex-1 flex flex-col p-4">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-white">Messages</h3>
-                  <div className="flex items-center gap-1 text-xs text-slate-400">
-                    <MessageSquare className="w-3 h-3" />
-                    <span>Live chat</span>
-                  </div>
-                </div>
-                
-                <div className="flex-1 overflow-y-auto space-y-3 mb-4 max-h-64">
-                  {chatMessages.length === 0 ? (
-                    <div className="text-center text-slate-400 mt-8">
-                      <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                      <p className="text-sm">No messages yet</p>
-                      <p className="text-xs mt-1">Say hello to get the conversation started!</p>
-                    </div>
-                  ) : (
-                    chatMessages.map((message) => (
-                      <div key={message.id} className={`text-sm ${message.isSystem ? 'text-center' : ''}`}>
-                        {message.isSystem ? (
-                          <div className="text-slate-400 italic px-3 py-2 bg-slate-800/50 rounded-lg">
-                            {message.message}
-                          </div>
                         ) : (
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-slate-300">{message.sender}</span>
-                              <span className="text-xs text-slate-500">
-                                {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            </div>
-                            <div className="text-slate-400 break-words bg-slate-800/30 p-2 rounded-lg">
-                              {message.message}
-                            </div>
-                          </div>
+                          (() => {
+                            const r = remoteParticipants.find(rm => String(rm.uid) === p.id)
+                            return r?.videoTrack ? (
+                              <AgoraVideoTile remoteVideoTrack={r.videoTrack} />
+                            ) : (
+                              <div className="w-full h-full bg-slate-950 flex items-center justify-center font-bold text-xs">
+                                {p.name.charAt(0).toUpperCase()}
+                              </div>
+                            )
+                          })()
                         )}
                       </div>
-                    ))
-                  )}
-                </div>
-                
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                    placeholder="Send a message to everyone"
-                    className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-slate-400"
-                  />
-                  <button
-                    onClick={sendMessage}
-                    disabled={!newMessage.trim()}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed rounded-lg text-white text-sm font-medium transition-colors"
-                  >
-                    Send
-                  </button>
-                </div>
-              </div>
-            )}
+                    ) : (
+                      <div className="w-full h-full bg-slate-950 flex items-center justify-center font-bold text-xs text-slate-400">
+                        {p.name.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <span className="absolute bottom-1 left-1 bg-black/60 px-1 py-0.5 rounded text-[10px] text-white truncate max-w-[80px]">
+                      {p.name}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
 
-            {/* Tool Panels */}
-            {showToolPanel === 'whiteboard' && (
-              <div className="flex-1 overflow-y-auto p-3">
-                <Whiteboard onToast={addToast} />
+        {/* 4. Slide-in right-side drawers */}
+        <AnimatePresence>
+          {activeDrawer && (
+            <motion.div
+              initial={{ x: 350, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 350, opacity: 0 }}
+              transition={{ duration: 0.22, ease: 'easeOut' }}
+              className="w-80 md:w-96 bg-slate-900 border-l border-white/10 flex flex-col h-full z-10 flex-shrink-0"
+            >
+              {/* Drawer Header */}
+              <div className="flex items-center justify-between p-4 border-b border-white/10">
+                <h3 className="font-bold text-white text-base capitalize flex items-center gap-2">
+                  {activeDrawer === 'chat' && <><MessageSquare className="w-5 h-5 text-cyan-400" /> Chat Messages</>}
+                  {activeDrawer === 'participants' && <><Users className="w-5 h-5 text-blue-400" /> Participants ({allParticipants.length})</>}
+                  {activeDrawer === 'virtualBg' && <><Layers className="w-5 h-5 text-purple-400" /> Virtual Background</>}
+                  {activeDrawer === 'breakoutRooms' && <><LayoutGrid className="w-5 h-5 text-orange-400" /> Breakout Rooms</>}
+                  {activeDrawer === 'waitingRoom' && <><Bell className="w-5 h-5 text-amber-400" /> Waiting Room ({waitingParticipants.length})</>}
+                  {activeDrawer === 'speakingQueue' && <><Hand className="w-5 h-5 text-yellow-400" /> Speaking Queue ({speakingQueue.length})</>}
+                  {activeDrawer === 'settings' && <><Settings className="w-5 h-5 text-slate-400" /> Device Settings</>}
+                </h3>
+                <button
+                  onClick={() => setActiveDrawer(null)}
+                  className="p-1 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-            )}
 
-            {showToolPanel === 'breakoutRooms' && (
-              <div className="flex-1 overflow-y-auto p-3">
-                <BreakoutRooms
-                  mainParticipants={allParticipants.map(p => p.name)}
-                  onToast={addToast}
-                />
-              </div>
-            )}
+              {/* Drawer Contents */}
+              <div className="flex-1 overflow-y-auto min-h-0">
+                {activeDrawer === 'chat' && (
+                  <div className="h-full flex flex-col p-4">
+                    <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+                      {chatMessages.length === 0 ? (
+                        <div className="text-center text-slate-500 py-12 text-sm">
+                          No messages yet.
+                        </div>
+                      ) : (
+                        chatMessages.map((msg) => (
+                          <div key={msg.id} className={`text-sm ${msg.isSystem ? 'text-center' : ''}`}>
+                            {msg.isSystem ? (
+                              <div className="text-slate-500 italic px-2 py-1 bg-slate-800/40 rounded-lg text-xs">
+                                {msg.message}
+                              </div>
+                            ) : (
+                              <div className="space-y-0.5">
+                                <div className="flex items-center justify-between text-xs text-slate-500">
+                                  <span className="font-semibold text-slate-300">{msg.sender}</span>
+                                  <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                </div>
+                                <div className="text-slate-300 bg-slate-800/30 p-2 rounded-lg break-words">
+                                  {msg.message}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                      <div ref={chatEndRef} />
+                    </div>
+                    
+                    <div className="flex gap-2 pt-4 border-t border-white/5 flex-shrink-0">
+                      <input
+                        type="text"
+                        value={newMessage}
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                        placeholder="Type message to everyone..."
+                        className="flex-1 bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-cyan-500/50"
+                      />
+                      <button
+                        onClick={sendMessage}
+                        disabled={!newMessage.trim()}
+                        className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-slate-950 font-bold rounded-lg text-sm transition-colors"
+                      >
+                        Send
+                      </button>
+                    </div>
+                  </div>
+                )}
 
-            {showToolPanel === 'screenRecording' && (
-              <div className="flex-1 overflow-y-auto p-3">
-                <ScreenRecording videoStream={localStream} onToast={addToast} />
-              </div>
-            )}
+                {activeDrawer === 'participants' && (
+                  <div className="p-4 space-y-4">
+                    <div className="flex items-center justify-between text-xs text-slate-400 uppercase tracking-wider font-semibold">
+                      <span>Roster</span>
+                      {currentUser.role === 'faculty' && (
+                        <button
+                          onClick={() => setShowInviteModal(true)}
+                          className="text-cyan-400 hover:text-cyan-300 flex items-center gap-1"
+                        >
+                          <UserPlus className="w-3.5 h-3.5" /> Add
+                        </button>
+                      )}
+                    </div>
+                    
+                    <div className="space-y-2">
+                      {allParticipants.map((p) => {
+                        const isStudentParticipant = selectedStudentIds.has(p.id)
+                        const isMarkedAttended = attendanceMap[p.id] || p.id === currentUser.id
+                        const queuePosition = speakingQueue.indexOf(p.id)
+                        const isInQueue = queuePosition !== -1
 
-            {showToolPanel === 'virtualBg' && (
-              <div className="flex-1 overflow-y-auto p-3">
-                <VirtualBackgrounds videoRef={videoRef} onToast={addToast} />
-              </div>
-            )}
+                        return (
+                          <div key={p.id} className="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/20 border border-white/5">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="w-8 h-8 rounded-full bg-slate-800 border border-white/10 flex items-center justify-center font-bold text-slate-300 flex-shrink-0">
+                                {p.name.charAt(0).toUpperCase()}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-xs font-semibold text-white truncate flex items-center gap-1">
+                                  {p.name}
+                                  {p.isHost && <span className="text-[9px] bg-cyan-500/10 px-1 border border-cyan-500/20 text-cyan-400 rounded">Host</span>}
+                                </div>
+                                <span className="text-[10px] text-slate-500 truncate block">{p.email || 'Student Role'}</span>
+                              </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              {isInQueue && (
+                                <span className="text-[9px] bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 px-1.5 py-0.5 rounded font-bold uppercase animate-pulse">Speak</span>
+                              )}
+                              
+                              {/* Audio/Video icons */}
+                              <span className="text-slate-400">
+                                {p.isMuted ? <MicOff className="w-3.5 h-3.5 text-red-400" /> : <Mic className="w-3.5 h-3.5 text-emerald-400" />}
+                              </span>
 
-            {showToolPanel === 'waitingRoom' && currentUser.role === 'faculty' && (
-              <div className="flex-1 overflow-y-auto p-3">
-                <WaitingRoom
-                  waitingParticipants={waitingParticipants}
-                  onAdmit={admitParticipant}
-                  onReject={rejectParticipant}
-                  onAdmitAll={admitAllParticipants}
-                />
+                              {/* Faculty controls */}
+                              {currentUser.role === 'faculty' && p.id !== currentUser.id && (
+                                <div className="flex items-center gap-1">
+                                  {isStudentParticipant && (
+                                    <button
+                                      onClick={() => onToggleAttendance?.(p.id)}
+                                      className={`text-[9px] font-bold border rounded px-1.5 py-0.5 transition-all ${
+                                        isMarkedAttended 
+                                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
+                                          : 'bg-rose-500/20 text-rose-300 border-rose-400/30'
+                                      }`}
+                                    >
+                                      {isMarkedAttended ? 'Present' : 'Absent'}
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => {
+                                      removeFromQueue(p.id)
+                                      setRemoteParticipants(prev => prev.filter(remote => String(remote.uid) !== p.id))
+                                      addToast(`${p.name} removed from meeting`, 'warning')
+                                    }}
+                                    className="p-1 hover:bg-red-500/10 rounded text-slate-400 hover:text-red-400 transition-colors"
+                                    title="Remove Participant"
+                                  >
+                                    <UserX className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {activeDrawer === 'virtualBg' && (
+                  <div className="p-3">
+                    <VirtualBackgrounds videoRef={videoRef} onToast={addToast} />
+                  </div>
+                )}
+
+                {activeDrawer === 'breakoutRooms' && (
+                  <div className="p-3">
+                    <BreakoutRooms
+                      mainParticipants={allParticipants.map(p => p.name)}
+                      onToast={addToast}
+                    />
+                  </div>
+                )}
+
+                {activeDrawer === 'waitingRoom' && (
+                  <div className="p-3">
+                    <WaitingRoom
+                      waitingParticipants={waitingParticipants}
+                      onAdmit={admitParticipant}
+                      onReject={rejectParticipant}
+                      onAdmitAll={admitAllParticipants}
+                    />
+                  </div>
+                )}
+
+                {activeDrawer === 'speakingQueue' && (
+                  <div className="p-4 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Active speaking queue</span>
+                      {speakingQueue.length > 0 && (
+                        <button
+                          onClick={clearSpeakingQueue}
+                          className="text-xs text-red-400 hover:text-red-300 font-bold"
+                        >
+                          Clear All
+                        </button>
+                      )}
+                    </div>
+                    {speakingQueue.length === 0 ? (
+                      <div className="text-center text-slate-500 text-sm py-12">No requests to speak</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {speakingQueue.map((id, index) => {
+                          const p = allParticipants.find(part => part.id === id)
+                          if (!p) return null
+                          return (
+                            <div key={id} className="flex items-center justify-between p-2.5 rounded-xl bg-yellow-500/5 border border-yellow-500/10">
+                              <div className="flex items-center gap-2">
+                                <span className="w-5 h-5 bg-yellow-500 text-black rounded-full flex items-center justify-center font-bold text-[10px]">
+                                  #{index + 1}
+                                </span>
+                                <span className="text-xs text-white font-medium">{p.name}</span>
+                              </div>
+                              <button
+                                onClick={() => removeFromQueue(id)}
+                                className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold px-2 py-0.5 rounded border border-white/10"
+                              >
+                                Dismiss
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeDrawer === 'settings' && (
+                  <div className="p-4 space-y-4">
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs text-slate-400 font-medium mb-1.5">Microphone Input</label>
+                        <select
+                          value={selectedAudioId}
+                          onChange={(e) => changeAudioDevice(e.target.value)}
+                          className="w-full bg-slate-950 border border-white/10 rounded-lg p-2 text-xs text-white outline-none"
+                        >
+                          {audioDevices.map((d) => (
+                            <option key={d.deviceId} value={d.deviceId}>{d.label || `Microphone ${d.deviceId.slice(0, 5)}`}</option>
+                          ))}
+                          {audioDevices.length === 0 && <option>No microphone found</option>}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-400 font-medium mb-1.5">Camera Source</label>
+                        <select
+                          value={selectedVideoId}
+                          onChange={(e) => changeVideoDevice(e.target.value)}
+                          className="w-full bg-slate-950 border border-white/10 rounded-lg p-2 text-xs text-white outline-none"
+                        >
+                          {videoDevices.map((d) => (
+                            <option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${d.deviceId.slice(0, 5)}`}</option>
+                          ))}
+                          {videoDevices.length === 0 && <option>No camera found</option>}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Local screen recorder */}
+                    {currentUser.role === 'faculty' && (
+                      <div className="border-t border-white/5 pt-4">
+                        <ScreenRecording
+                          videoStream={localStream}
+                          onToast={addToast}
+                          classId={meetingId}
+                          meetingId={meetingSessionId || meetingId}
+                          facultyId={currentUser.id}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeDrawer === 'files' && (
+                  <div className="p-3">
+                    <FileSharing
+                      files={sharedFiles}
+                      onUpload={handleFileUpload}
+                      onDelete={handleFileDelete}
+                      onToast={addToast}
+                    />
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
-      {/* Enhanced Control Bar */}
-      <div
-        className={`fixed left-0 right-0 bottom-0 px-6 py-4 transition-all duration-300 ease-out backdrop-blur-lg border-t border-white/10 ${
-          controlsVisible ? 'opacity-100 translate-y-0 bg-slate-900/40' : 'opacity-0 translate-y-4 pointer-events-none bg-slate-900/20'
+      {/* 5. Centered bottom control bar */}
+      <footer
+        className={`px-6 py-4 flex items-center justify-center transition-all duration-300 bg-slate-900/40 border-t border-white/5 backdrop-blur-md z-20 flex-shrink-0 ${
+          controlsVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
         }`}
         onMouseEnter={() => setControlsVisible(true)}
-        onMouseMove={() => setControlsVisible(true)}
       >
-        <div className="flex items-center justify-between max-w-6xl mx-auto">
-          {/* Left Side - Meeting Info */}
-          <div className="flex items-center gap-4 text-sm text-slate-300 min-w-0 flex-1">
-            {speakingQueue.length > 0 && currentUser.role === 'faculty' && (
-              <div className="flex items-center gap-2 text-yellow-400">
-                <Hand className="w-4 h-4" />
-                <span>{speakingQueue.length} waiting to speak</span>
-              </div>
-            )}
-          </div>
+        <div className="flex items-center gap-3">
+          {/* Audio toggle */}
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={toggleMute}
+            className={`p-3.5 rounded-full border transition-all ${
+              isMuted
+                ? 'bg-red-500 hover:bg-red-600 text-white border-red-400/20 shadow-lg shadow-red-500/20'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
+            }`}
+            title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+          >
+            {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+          </motion.button>
 
-          {/* Center - Main Controls */}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={toggleMute}
-              className={`relative p-4 rounded-full transition-all duration-200 ${
-                isMuted
-                  ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/25'
-                  : 'bg-slate-700/80 hover:bg-slate-600 text-slate-300 hover:text-white border border-slate-600'
+          {/* Video toggle */}
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={toggleVideo}
+            className={`p-3.5 rounded-full border transition-all ${
+              !isVideoOn
+                ? 'bg-red-500 hover:bg-red-600 text-white border-red-400/20 shadow-lg shadow-red-500/20'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
+            }`}
+            title={isVideoOn ? 'Stop video' : 'Start video'}
+          >
+            {isVideoOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+          </motion.button>
+
+          {/* Screen Share toggle */}
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={toggleScreenShare}
+            className={`p-3.5 rounded-full border transition-all ${
+              isScreenSharing
+                ? 'bg-cyan-600 hover:bg-cyan-500 text-slate-950 border-cyan-400/20 shadow-lg shadow-cyan-600/20'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
+            }`}
+            title={isScreenSharing ? 'Stop screen sharing' : 'Share screen'}
+          >
+            <Share2 className="w-5 h-5" />
+          </motion.button>
+
+          {/* Hand Raise / speaking queue button */}
+          {currentUser.role === 'student' ? (
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={requestToSpeak}
+              disabled={speakingQueue.includes(currentUser.id)}
+              className={`p-3.5 rounded-full border transition-all ${
+                speakingQueue.includes(currentUser.id)
+                  ? 'bg-yellow-500 hover:bg-yellow-600 text-slate-950 border-yellow-400/20 shadow-lg shadow-yellow-500/20'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
               }`}
-              title={isMuted ? 'Unmute (⌘+D)' : 'Mute (⌘+D)'}
+              title="Raise hand to speak"
             >
-              {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-              {!isMuted && (
-                <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
-              )}
-            </button>
-
-            <button
-              onClick={toggleVideo}
-              className={`p-4 rounded-full transition-all duration-200 ${
-                !isVideoOn
-                  ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/25'
-                  : 'bg-slate-700/80 hover:bg-slate-600 text-slate-300 hover:text-white border border-slate-600'
+              <Hand className="w-5 h-5" />
+            </motion.button>
+          ) : (
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setActiveDrawer(prev => prev === 'speakingQueue' ? null : 'speakingQueue')}
+              className={`relative p-3.5 rounded-full border transition-all ${
+                activeDrawer === 'speakingQueue'
+                  ? 'bg-yellow-500 hover:bg-yellow-600 text-slate-950 border-yellow-400/20 shadow-lg shadow-yellow-500/20'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
               }`}
-              title={isVideoOn ? 'Stop video (⌘+E)' : 'Start video (⌘+E)'}
+              title="View speaking queue"
             >
-              {isVideoOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
-            </button>
-
-            <button
-              onClick={toggleScreenShare}
-              className={`p-4 rounded-full transition-all duration-200 ${
-                isScreenSharing
-                  ? 'bg-blue-500 hover:bg-blue-600 text-white shadow-lg shadow-blue-500/25'
-                  : 'bg-slate-700/80 hover:bg-slate-600 text-slate-300 hover:text-white border border-slate-600'
-              }`}
-              title="Share screen"
-            >
-              <Share2 className="w-5 h-5" />
-            </button>
-
-            {/* Request to Speak (Students only) */}
-            {currentUser.role === 'student' && (
-              <button
-                onClick={requestToSpeak}
-                disabled={speakingQueue.includes(currentUser.id)}
-                className={`p-4 rounded-full transition-all duration-200 ${
-                  speakingQueue.includes(currentUser.id)
-                    ? 'bg-yellow-500 text-white shadow-lg shadow-yellow-500/25 cursor-not-allowed'
-                    : 'bg-slate-700/80 hover:bg-slate-600 text-slate-300 hover:text-white border border-slate-600'
-                }`}
-                title={speakingQueue.includes(currentUser.id) ? 'Request sent' : 'Request to speak'}
-              >
-                <Hand className="w-5 h-5" />
-              </button>
-            )}
-
-            {/* Speaking Queue Toggle (Faculty only) */}
-            {currentUser.role === 'faculty' && speakingQueue.length > 0 && (
-              <button
-                onClick={() => setShowSpeakingQueue(!showSpeakingQueue)}
-                className={`relative p-4 rounded-full transition-all duration-200 ${
-                  showSpeakingQueue
-                    ? 'bg-yellow-500 text-white shadow-lg shadow-yellow-500/25'
-                    : 'bg-slate-700/80 hover:bg-slate-600 text-slate-300 hover:text-white border border-slate-600'
-                }`}
-                title="View speaking queue"
-              >
-                <Hand className="w-5 h-5" />
-                <div className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-400 text-black rounded-full flex items-center justify-center text-xs font-bold">
+              <Hand className="w-5 h-5" />
+              {speakingQueue.length > 0 && (
+                <div className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-400 text-black rounded-full flex items-center justify-center text-xs font-bold shadow-md animate-pulse">
                   {speakingQueue.length}
                 </div>
-              </button>
-            )}
-
-            <button
-              onClick={() => setIsRecording(!isRecording)}
-              className={`p-4 rounded-full transition-all duration-200 ${
-                isRecording
-                  ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/25'
-                  : 'bg-slate-700/80 hover:bg-slate-600 text-slate-300 hover:text-white border border-slate-600'
-              }`}
-              title={isRecording ? 'Stop recording' : 'Start recording'}
-            >
-              <Circle className={`w-5 h-5 ${isRecording ? 'animate-pulse' : ''}`} />
-            </button>
-          </div>
-
-          {/* Right Side - Settings and End Meeting */}
-          <div className="flex items-center gap-3 min-w-0 flex-1 justify-end">
-            <div className="relative">
-              <button
-                onClick={() => setShowSettings(!showSettings)}
-                className="p-3 rounded-full bg-slate-700/80 hover:bg-slate-600 text-slate-300 hover:text-white border border-slate-600 transition-all duration-200"
-                title="Settings"
-              >
-                <Settings className="w-4 h-4" />
-              </button>
-              
-              {showSettings && (
-                <div className="absolute bottom-16 right-0 bg-slate-800/95 backdrop-blur-sm border border-white/10 rounded-xl p-2 min-w-56 shadow-xl z-50">
-                  <div className="space-y-1">
-                    <button
-                      onClick={() => setIsFullscreen(!isFullscreen)}
-                      className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-colors"
-                    >
-                      {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-                      {isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-                    </button>
-                    <button className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-colors">
-                      <Camera className="w-4 h-4" />
-                      Camera settings
-                    </button>
-                    <button className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-colors">
-                      <Mic className="w-4 h-4" />
-                      Audio settings
-                    </button>
-                    <div className="border-t border-slate-600 my-2"></div>
-                    <button className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-colors">
-                      <Monitor className="w-4 h-4" />
-                      Display settings
-                    </button>
-                    <button className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-colors">
-                      <Shield className="w-4 h-4" />
-                      Meeting security
-                    </button>
-                  </div>
-                </div>
               )}
-            </div>
-            
-            <button
-              onClick={handleEndMeeting}
-              className="px-6 py-3 rounded-full bg-red-500 hover:bg-red-600 text-white font-medium transition-all duration-200 shadow-lg shadow-red-500/25 hover:shadow-red-500/40 flex items-center gap-2"
-              title="Leave meeting"
-            >
-              <PhoneOff className="w-4 h-4" />
-              <span className="hidden sm:inline">End</span>
-            </button>
-          </div>
-        </div>
-      </div>
+            </motion.button>
+          )}
 
-      {/* Toast Notifications */}
-      <div className="fixed bottom-20 right-6 z-50 space-y-2 pointer-events-none">
+          {/* Chat drawer toggle */}
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setActiveDrawer(prev => prev === 'chat' ? null : 'chat')}
+            className={`p-3.5 rounded-full border transition-all ${
+              activeDrawer === 'chat'
+                ? 'bg-cyan-600 hover:bg-cyan-500 text-slate-950 border-cyan-400/20 shadow-lg shadow-cyan-600/20'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
+            }`}
+            title="Chat Messages"
+          >
+            <MessageSquare className="w-5 h-5" />
+          </motion.button>
+
+          {/* Participants drawer toggle */}
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setActiveDrawer(prev => prev === 'participants' ? null : 'participants')}
+            className={`p-3.5 rounded-full border transition-all ${
+              activeDrawer === 'participants'
+                ? 'bg-cyan-600 hover:bg-cyan-500 text-slate-950 border-cyan-400/20 shadow-lg shadow-cyan-600/20'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/5'
+            }`}
+            title="Participants List"
+          >
+            <Users className="w-5 h-5" />
+          </motion.button>
+
+          {/* Ellipsis Popover Menu */}
+          <div className="relative">
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setShowMoreMenu(prev => !prev)}
+              className="p-3.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/5 transition-all"
+              title="More options"
+            >
+              <MoreVertical className="w-5 h-5" />
+            </motion.button>
+            
+            <AnimatePresence>
+              {showMoreMenu && (
+                <motion.div
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 15 }}
+                  className="absolute bottom-16 right-0 bg-slate-900 border border-white/10 rounded-2xl p-2 min-w-56 shadow-2xl z-40 flex flex-col gap-0.5"
+                >
+                  {/* Share Whiteboard */}
+                  <button
+                    onClick={() => { setShowWhiteboard(prev => !prev); setShowMoreMenu(false) }}
+                    className="w-full flex items-center gap-3 px-3.5 py-2 hover:bg-white/5 rounded-xl text-xs text-slate-300 hover:text-white transition-colors"
+                  >
+                    <Pencil className="w-4 h-4 text-cyan-400" />
+                    <span>{showWhiteboard ? 'Hide whiteboard' : 'Open whiteboard'}</span>
+                  </button>
+
+                  {/* Virtual BG */}
+                  <button
+                    onClick={() => { setActiveDrawer('virtualBg'); setShowMoreMenu(false) }}
+                    className="w-full flex items-center gap-3 px-3.5 py-2 hover:bg-white/5 rounded-xl text-xs text-slate-300 hover:text-white transition-colors"
+                  >
+                    <Layers className="w-4 h-4 text-purple-400" />
+                    <span>Virtual Background</span>
+                  </button>
+
+                  {/* Settings */}
+                  <button
+                    onClick={() => { setActiveDrawer('settings'); setShowMoreMenu(false) }}
+                    className="w-full flex items-center gap-3 px-3.5 py-2 hover:bg-white/5 rounded-xl text-xs text-slate-300 hover:text-white transition-colors"
+                  >
+                    <Settings className="w-4 h-4 text-slate-400" />
+                    <span>Device Settings</span>
+                  </button>
+
+                  {/* File Sharing */}
+                  <button
+                    onClick={() => { setActiveDrawer('files'); setShowMoreMenu(false) }}
+                    className="w-full flex items-center gap-3 px-3.5 py-2 hover:bg-white/5 rounded-xl text-xs text-slate-300 hover:text-white transition-colors"
+                  >
+                    <FolderOpen className="w-4 h-4 text-emerald-400" />
+                    <span>File Sharing</span>
+                  </button>
+
+                  {/* Fullscreen */}
+                  <button
+                    onClick={() => { setIsFullscreen(prev => !prev); setShowMoreMenu(false) }}
+                    className="w-full flex items-center gap-3 px-3.5 py-2 hover:bg-white/5 rounded-xl text-xs text-slate-300 hover:text-white transition-colors"
+                  >
+                    {isFullscreen ? <Minimize className="w-4 h-4 text-slate-400" /> : <Maximize className="w-4 h-4 text-slate-400" />}
+                    <span>{isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => { handleCopyInviteLink(); setShowMoreMenu(false) }}
+                    className="w-full flex items-center gap-3 px-3.5 py-2 hover:bg-white/5 rounded-xl text-xs text-slate-300 hover:text-white transition-colors"
+                  >
+                    <Info className="w-4 h-4 text-slate-400" />
+                    <span>Meeting Info</span>
+                  </button>
+
+                  {/* Faculty specific actions */}
+                  {currentUser.role === 'faculty' && (
+                    <>
+                      <div className="border-t border-white/5 my-1.5" />
+                      
+                      {/* Recording */}
+                      <button
+                        onClick={() => { toggleRecording(); setShowMoreMenu(false) }}
+                        className="w-full flex items-center gap-3 px-3.5 py-2 hover:bg-white/5 rounded-xl text-xs text-slate-300 hover:text-white transition-colors"
+                      >
+                        <Circle className={`w-4 h-4 text-red-500 ${isRecording ? 'animate-pulse' : ''}`} />
+                        <span>{isRecording ? 'Stop Recording' : 'Start Recording'}</span>
+                      </button>
+
+                      {/* Breakout Rooms */}
+                      <button
+                        onClick={() => { setActiveDrawer('breakoutRooms'); setShowMoreMenu(false) }}
+                        className="w-full flex items-center gap-3 px-3.5 py-2 hover:bg-white/5 rounded-xl text-xs text-slate-300 hover:text-white transition-colors"
+                      >
+                        <LayoutGrid className="w-4 h-4 text-orange-400" />
+                        <span>Breakout Rooms</span>
+                      </button>
+
+                      {/* Waiting Room */}
+                      <button
+                        onClick={() => { setActiveDrawer('waitingRoom'); setShowMoreMenu(false) }}
+                        className="w-full flex items-center gap-3 px-3.5 py-2 hover:bg-white/5 rounded-xl text-xs text-slate-300 hover:text-white transition-colors relative"
+                      >
+                        <Bell className="w-4 h-4 text-amber-400" />
+                        <span>Waiting Room</span>
+                        {waitingParticipants.length > 0 && (
+                          <span className="w-2 h-2 rounded-full bg-amber-400 absolute right-4 top-3" />
+                        )}
+                      </button>
+
+                      {/* Lock Meeting */}
+                      <button
+                        onClick={() => { handleToggleLock(); setShowMoreMenu(false) }}
+                        className="w-full flex items-center gap-3 px-3.5 py-2 hover:bg-white/5 rounded-xl text-xs text-slate-300 hover:text-white transition-colors"
+                      >
+                        {isLocked ? <Unlock className="w-4 h-4 text-emerald-400" /> : <Lock className="w-4 h-4 text-red-400" />}
+                        <span>{isLocked ? 'Unlock Meeting' : 'Lock Meeting'}</span>
+                      </button>
+
+                      {/* Attendance Export */}
+                      <button
+                        onClick={() => { exportAttendance(); setShowMoreMenu(false) }}
+                        className="w-full flex items-center gap-3 px-3.5 py-2 hover:bg-white/5 rounded-xl text-xs text-slate-300 hover:text-white transition-colors"
+                      >
+                        <Film className="w-4 h-4 text-emerald-400" />
+                        <span>Export Attendance</span>
+                      </button>
+                    </>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Red leave meeting button */}
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={handleEndMeeting}
+            className="px-6 py-3.5 rounded-full bg-red-600 hover:bg-red-700 text-white font-bold transition-all shadow-lg shadow-red-600/25 flex items-center gap-2"
+            title="Leave meeting"
+          >
+            <PhoneOff className="w-4 h-4" />
+            <span>End</span>
+          </motion.button>
+        </div>
+      </footer>
+
+      {/* Toast notifications */}
+      <div className="fixed bottom-24 right-6 z-50 space-y-2 pointer-events-none">
         {toasts.map(toast => (
           <Toast key={toast.id} message={toast.message} type={toast.type} />
         ))}
       </div>
 
+      {/* Floating Reactions animations container */}
       <FloatingReactions reactions={floatingReactions} />
 
+      {/* Invite Modal */}
       <MeetingInvite
         isOpen={showInviteModal}
         onClose={() => setShowInviteModal(false)}

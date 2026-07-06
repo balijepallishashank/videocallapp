@@ -9,9 +9,19 @@ export interface ScheduledMeeting {
   date: Date
   duration: number
   participants: string[]
+  academicTarget?: AcademicMeetingTarget
   recurring: 'none' | 'daily' | 'weekly' | 'monthly'
   reminder: number // minutes before
   meetingLink?: string
+}
+
+export interface AcademicMeetingTarget {
+  id: string
+  label: string
+  type: 'branch' | 'year' | 'section'
+  branchId?: string
+  yearId?: string
+  sectionId?: string
 }
 
 interface CalendarIntegrationProps {
@@ -21,6 +31,7 @@ interface CalendarIntegrationProps {
   onDelete: (id: string) => void
   onToast: (message: string, type: 'info' | 'success' | 'warning' | 'error') => void
   teamMembers?: Array<{ id: string; name: string; email: string; status: string }>
+  academicTargets?: AcademicMeetingTarget[]
 }
 
 export default function CalendarIntegration({
@@ -28,6 +39,7 @@ export default function CalendarIntegration({
   onSchedule,
   onDelete,
   onToast,
+  academicTargets = [],
 }: CalendarIntegrationProps) {
   const [showScheduleForm, setShowScheduleForm] = useState(false)
   const [formData, setFormData] = useState<{
@@ -36,6 +48,7 @@ export default function CalendarIntegration({
     duration: number
     participants: string[]
     participantEmail: string
+    academicTargetId: string
     recurring: ScheduledMeeting['recurring']
     reminder: number
   }>({
@@ -44,6 +57,7 @@ export default function CalendarIntegration({
     duration: 60,
     participants: [],
     participantEmail: '',
+    academicTargetId: '',
     recurring: 'none',
     reminder: 15,
   })
@@ -127,6 +141,7 @@ export default function CalendarIntegration({
         date: new Date(formData.date),
         duration: formData.duration,
         participants: selectedParticipants,
+        academicTarget: academicTargets.find((target) => target.id === formData.academicTargetId),
         recurring: formData.recurring,
         reminder: formData.reminder,
         meetingLink,
@@ -142,6 +157,7 @@ export default function CalendarIntegration({
         duration: 60,
         participants: [],
         participantEmail: '',
+        academicTargetId: '',
         recurring: 'none',
         reminder: 15,
       })
@@ -279,7 +295,7 @@ export default function CalendarIntegration({
             </div>
 
             {/* Date, Duration, and Reminder in 3 Columns */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-slate-300">Date & Time</label>
                 <input
@@ -349,6 +365,23 @@ export default function CalendarIntegration({
                 </>
               )}
             </motion.div>
+
+            {/* Participants Section */}
+            {academicTargets.length > 0 && (
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-300">Academic Target</label>
+                <select
+                  value={formData.academicTargetId}
+                  onChange={(e) => setFormData({ ...formData, academicTargetId: e.target.value })}
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-700/50 border-2 border-slate-600 text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">Manual participants</option>
+                  {academicTargets.map((target) => (
+                    <option key={target.id} value={target.id}>{target.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Participants Section */}
             <div className="space-y-2">
@@ -458,6 +491,7 @@ export default function CalendarIntegration({
                     duration: 60,
                     participants: [],
                     participantEmail: '',
+                    academicTargetId: '',
                     recurring: 'none',
                     reminder: 15,
                   })
@@ -532,6 +566,13 @@ export default function CalendarIntegration({
                     <div className="flex items-center gap-2 text-xs text-slate-400">
                       <Users className="w-4 h-4 text-blue-400" />
                       {meeting.participants.length} participant{meeting.participants.length !== 1 ? 's' : ''}
+                    </div>
+                  )}
+
+                  {meeting.academicTarget && (
+                    <div className="flex items-center gap-2 text-xs text-cyan-300 mb-2">
+                      <Users className="w-4 h-4 text-cyan-400" />
+                      {meeting.academicTarget.label}
                     </div>
                   )}
 

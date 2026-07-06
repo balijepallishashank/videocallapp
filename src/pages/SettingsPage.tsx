@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   User, Lock, Bell, Palette, Shield, ArrowLeft, Upload, Save,
   Camera, Eye as EyeIcon, EyeOff, Smartphone,
   Trash2, Download
 } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
+import { saveUserProfile } from '../services/db'
 
 interface UserSettings {
   // Profile
@@ -99,7 +101,89 @@ const defaultSettings: UserSettings = {
   subscription: 'free',
 }
 
+const isStatusValue = (value: unknown): value is UserSettings['status'] =>
+  value === 'available' || value === 'busy' || value === 'away' || value === 'in-meeting'
+
+const isPrivacyLevelValue = (value: unknown): value is UserSettings['privacyLevel'] =>
+  value === 'public' || value === 'friends-only' || value === 'private'
+
+const isLayoutStyleValue = (value: unknown): value is UserSettings['layoutStyle'] =>
+  value === 'default' || value === 'compact' || value === 'spacious'
+
+const buildSettingsFromProfile = (profile: Record<string, unknown> | null | undefined): UserSettings => {
+  const email = typeof profile?.email === 'string' && profile.email.trim() ? profile.email : defaultSettings.email
+  const name = typeof profile?.name === 'string' && profile.name.trim() ? profile.name : defaultSettings.fullName
+
+  return {
+    ...defaultSettings,
+    profilePicture: typeof profile?.profilePhoto === 'string' && profile.profilePhoto.trim()
+      ? profile.profilePhoto
+      : defaultSettings.profilePicture,
+    fullName: name,
+    username: typeof profile?.username === 'string' && profile.username.trim()
+      ? profile.username
+      : email.split('@')[0] || defaultSettings.username,
+    email,
+    phone: typeof profile?.phone === 'string' ? profile.phone : defaultSettings.phone,
+    status: isStatusValue(profile?.status) ? profile.status : defaultSettings.status,
+    statusMessage: typeof profile?.statusMessage === 'string' ? profile.statusMessage : defaultSettings.statusMessage,
+    timezone: typeof profile?.timezone === 'string' ? profile.timezone : defaultSettings.timezone,
+    language: typeof profile?.language === 'string' ? profile.language : defaultSettings.language,
+    defaultCamera: typeof profile?.defaultCamera === 'string' ? profile.defaultCamera : defaultSettings.defaultCamera,
+    defaultMicrophone: typeof profile?.defaultMicrophone === 'string' ? profile.defaultMicrophone : defaultSettings.defaultMicrophone,
+    speakerOutput: typeof profile?.speakerOutput === 'string' ? profile.speakerOutput : defaultSettings.speakerOutput,
+    autoMuteOnJoin: typeof profile?.autoMuteOnJoin === 'boolean' ? profile.autoMuteOnJoin : defaultSettings.autoMuteOnJoin,
+    autoTurnOffCameraOnJoin: typeof profile?.autoTurnOffCameraOnJoin === 'boolean' ? profile.autoTurnOffCameraOnJoin : defaultSettings.autoTurnOffCameraOnJoin,
+    noiseCancellation: typeof profile?.noiseCancellation === 'boolean' ? profile.noiseCancellation : defaultSettings.noiseCancellation,
+    hdVideo: typeof profile?.hdVideo === 'boolean' ? profile.hdVideo : defaultSettings.hdVideo,
+    meetingReminders: typeof profile?.meetingReminders === 'boolean' ? profile.meetingReminders : defaultSettings.meetingReminders,
+    chatNotifications: typeof profile?.chatNotifications === 'boolean' ? profile.chatNotifications : defaultSettings.chatNotifications,
+    emailNotifications: typeof profile?.emailNotifications === 'boolean' ? profile.emailNotifications : defaultSettings.emailNotifications,
+    desktopNotifications: typeof profile?.desktopNotifications === 'boolean' ? profile.desktopNotifications : defaultSettings.desktopNotifications,
+    soundAlerts: typeof profile?.soundAlerts === 'boolean' ? profile.soundAlerts : defaultSettings.soundAlerts,
+    privacyLevel: isPrivacyLevelValue(profile?.privacyLevel) ? profile.privacyLevel : defaultSettings.privacyLevel,
+    darkMode: typeof profile?.darkMode === 'boolean' ? profile.darkMode : defaultSettings.darkMode,
+    accentColor: typeof profile?.accentColor === 'string' ? profile.accentColor : defaultSettings.accentColor,
+    layoutStyle: isLayoutStyleValue(profile?.layoutStyle) ? profile.layoutStyle : defaultSettings.layoutStyle,
+    backgroundBlur: typeof profile?.backgroundBlur === 'boolean' ? profile.backgroundBlur : defaultSettings.backgroundBlur,
+    storageUsed: typeof profile?.storageUsed === 'number' ? profile.storageUsed : defaultSettings.storageUsed,
+    subscription: profile?.subscription === 'pro' || profile?.subscription === 'business' || profile?.subscription === 'free'
+      ? profile.subscription
+      : defaultSettings.subscription,
+  }
+}
+
+const buildProfileUpdate = (settings: UserSettings) => ({
+  name: settings.fullName.trim(),
+  email: settings.email.trim(),
+  phone: settings.phone.trim(),
+  profilePhoto: settings.profilePicture,
+  username: settings.username.trim(),
+  status: settings.status,
+  statusMessage: settings.statusMessage.trim(),
+  timezone: settings.timezone,
+  language: settings.language,
+  defaultCamera: settings.defaultCamera,
+  defaultMicrophone: settings.defaultMicrophone,
+  speakerOutput: settings.speakerOutput,
+  autoMuteOnJoin: settings.autoMuteOnJoin,
+  autoTurnOffCameraOnJoin: settings.autoTurnOffCameraOnJoin,
+  noiseCancellation: settings.noiseCancellation,
+  hdVideo: settings.hdVideo,
+  meetingReminders: settings.meetingReminders,
+  chatNotifications: settings.chatNotifications,
+  emailNotifications: settings.emailNotifications,
+  desktopNotifications: settings.desktopNotifications,
+  soundAlerts: settings.soundAlerts,
+  privacyLevel: settings.privacyLevel,
+  darkMode: settings.darkMode,
+  accentColor: settings.accentColor,
+  layoutStyle: settings.layoutStyle,
+  backgroundBlur: settings.backgroundBlur,
+})
+
 export default function SettingsPage({ onBack, initialTab = 'profile' }: SettingsPageProps) {
+  const { currentUser, updateCurrentUserProfile } = useAuth()
   const [settings, setSettings] = useState<UserSettings>(defaultSettings)
   const [activeTab, setActiveTab] = useState<SettingsTabId>(initialTab)
   const [showPassword, setShowPassword] = useState(false)
@@ -107,6 +191,54 @@ export default function SettingsPage({ onBack, initialTab = 'profile' }: Setting
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [twoFAEnabled, setTwoFAEnabled] = useState(false)
+  const [loadedProfileId, setLoadedProfileId] = useState<string | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!currentUser || loadedProfileId === currentUser.id) return
+
+    setSettings(buildSettingsFromProfile(currentUser as unknown as Record<string, unknown>))
+    setLoadedProfileId(currentUser.id)
+  }, [currentUser, loadedProfileId])
+
+  const handleProfilePictureUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setSettings((prev) => ({ ...prev, profilePicture: reader.result as string }))
+      }
+    }
+    reader.readAsDataURL(file)
+    event.target.value = ''
+  }
+
+  const handleSaveSettings = async () => {
+    if (!currentUser) {
+      setSaveError('No signed-in user profile was found.')
+      return
+    }
+
+    setIsSaving(true)
+    setSaveStatus(null)
+    setSaveError(null)
+
+    const profileUpdate = buildProfileUpdate(settings)
+
+    try {
+      await saveUserProfile(currentUser.id, profileUpdate)
+      updateCurrentUserProfile(profileUpdate)
+      setSaveStatus('Settings saved to your profile.')
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to save settings.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
 
   const tabs: Array<{ id: SettingsTabId; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { id: 'profile', label: 'Profile', icon: User },
@@ -138,8 +270,12 @@ export default function SettingsPage({ onBack, initialTab = 'profile' }: Setting
       <div>
         <label className="block text-sm font-medium text-white mb-4">Profile Picture</label>
         <div className="flex items-center gap-6">
-          <div className="w-32 h-32 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-6xl border-4 border-white/10">
-            {settings.profilePicture}
+          <div className="w-32 h-32 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-6xl border-4 border-white/10 overflow-hidden">
+            {settings.profilePicture.startsWith('data:') || /^https?:\/\//.test(settings.profilePicture) ? (
+              <img src={settings.profilePicture} alt="Profile" className="h-full w-full object-cover" />
+            ) : (
+              settings.profilePicture
+            )}
           </div>
           <motion.label
             whileHover={{ scale: 1.05 }}
@@ -148,7 +284,7 @@ export default function SettingsPage({ onBack, initialTab = 'profile' }: Setting
           >
             <Upload className="w-4 h-4" />
             Change Picture
-            <input type="file" hidden accept="image/*" />
+            <input type="file" hidden accept="image/*" onChange={handleProfilePictureUpload} />
           </motion.label>
         </div>
       </div>
@@ -276,10 +412,12 @@ export default function SettingsPage({ onBack, initialTab = 'profile' }: Setting
       <motion.button
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.98 }}
+        onClick={handleSaveSettings}
+        disabled={isSaving}
         className="w-full py-3 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold transition-all flex items-center justify-center gap-2 mt-8"
       >
         <Save className="w-5 h-5" />
-        Save Changes
+        {isSaving ? 'Saving...' : 'Save Changes'}
       </motion.button>
     </div>
   )
@@ -366,10 +504,12 @@ export default function SettingsPage({ onBack, initialTab = 'profile' }: Setting
       <motion.button
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.98 }}
+        onClick={handleSaveSettings}
+        disabled={isSaving}
         className="w-full py-3 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold transition-all flex items-center justify-center gap-2 mt-8"
       >
         <Save className="w-5 h-5" />
-        Save Changes
+        {isSaving ? 'Saving...' : 'Save Changes'}
       </motion.button>
     </div>
   )
@@ -415,10 +555,12 @@ export default function SettingsPage({ onBack, initialTab = 'profile' }: Setting
       <motion.button
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.98 }}
+        onClick={handleSaveSettings}
+        disabled={isSaving}
         className="w-full py-3 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold transition-all flex items-center justify-center gap-2 mt-8"
       >
         <Save className="w-5 h-5" />
-        Save Changes
+        {isSaving ? 'Saving...' : 'Save Changes'}
       </motion.button>
     </div>
   )
@@ -592,7 +734,11 @@ export default function SettingsPage({ onBack, initialTab = 'profile' }: Setting
         label="Dark Mode"
         description="Use dark theme (currently enabled)"
         value={settings.darkMode}
-        onChange={(val) => handleSettingChange('darkMode', val)}
+        onChange={(val) => {
+          handleSettingChange('darkMode', val);
+          if (val) document.documentElement.classList.add('dark');
+          else document.documentElement.classList.remove('dark');
+        }}
       />
 
       <div>
@@ -663,10 +809,12 @@ export default function SettingsPage({ onBack, initialTab = 'profile' }: Setting
       <motion.button
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.98 }}
+        onClick={handleSaveSettings}
+        disabled={isSaving}
         className="w-full py-3 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold transition-all flex items-center justify-center gap-2 mt-8"
       >
         <Save className="w-5 h-5" />
-        Save Changes
+        {isSaving ? 'Saving...' : 'Save Changes'}
       </motion.button>
     </div>
   )
@@ -790,6 +938,14 @@ export default function SettingsPage({ onBack, initialTab = 'profile' }: Setting
           )
         })}
       </div>
+
+      {(saveStatus || saveError) && (
+        <div className="px-6 pt-4">
+          <div className={`rounded-2xl border px-4 py-3 text-sm ${saveError ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'}`}>
+            {saveError || saveStatus}
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">

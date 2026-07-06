@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { X, Users, UserCheck, UserPlus, Video, Check } from 'lucide-react'
 import IconButton from '../../components/ui/IconButton'
-import type { StudentRecord, AcademicSection } from '../../components/layout/HierarchicalSidebar'
+import type { StudentRecord, AcademicSection } from '../classWorkspace/types'
 
 interface StudentSelectionModalProps {
   isOpen: boolean

@@ -16,6 +16,10 @@ export interface MeetingRecord {
   attendanceReport?: Array<{ name: string; status: 'Attended' | 'Absent' }>
   absentMembers?: string[]
   autoSharedWithAbsent?: boolean
+  sectionId?: string
+  sectionName?: string
+  branchName?: string
+  yearNumber?: number
 }
 
 interface MeetingHistoryProps {
@@ -26,6 +30,14 @@ interface MeetingHistoryProps {
 export default function MeetingHistory({ meetings, onPlayRecording }: MeetingHistoryProps) {
   const [filter, setFilter] = useState<'all' | 'day' | 'week' | 'month'>('all')
   const [sortBy, setSortBy] = useState<'date' | 'duration'>('date')
+  const [sectionFilter, setSectionFilter] = useState('all')
+  const sectionOptions = Array.from(
+    new Map(
+      meetings
+        .filter((meeting) => meeting.sectionId && meeting.sectionName)
+        .map((meeting) => [meeting.sectionId!, meeting.sectionName!]),
+    ),
+  )
 
   const getFilteredMeetings = () => {
     const now = new Date()
@@ -36,18 +48,24 @@ export default function MeetingHistory({ meetings, onPlayRecording }: MeetingHis
     let filtered = meetings
 
     if (filter === 'day') {
-      filtered = meetings.filter((m) => now.getTime() - m.date.getTime() < oneDay)
+      filtered = meetings.filter((m) => m.date && (now.getTime() - m.date.getTime() < oneDay))
     } else if (filter === 'week') {
-      filtered = meetings.filter((m) => now.getTime() - m.date.getTime() < oneWeek)
+      filtered = meetings.filter((m) => m.date && (now.getTime() - m.date.getTime() < oneWeek))
     } else if (filter === 'month') {
-      filtered = meetings.filter((m) => now.getTime() - m.date.getTime() < oneMonth)
+      filtered = meetings.filter((m) => m.date && (now.getTime() - m.date.getTime() < oneMonth))
+    }
+
+    if (sectionFilter !== 'all') {
+      filtered = filtered.filter((m) => m.sectionId === sectionFilter)
     }
 
     return filtered.sort((a, b) => {
+      const aDate = a.date || new Date(0)
+      const bDate = b.date || new Date(0)
       if (sortBy === 'date') {
-        return b.date.getTime() - a.date.getTime()
+        return bDate.getTime() - aDate.getTime()
       }
-      return b.duration - a.duration
+      return (b.duration || 0) - (a.duration || 0)
     })
   }
 
@@ -62,9 +80,9 @@ export default function MeetingHistory({ meetings, onPlayRecording }: MeetingHis
 
   const getStats = () => {
     const totalMeetings = meetings.length
-    const totalDuration = meetings.reduce((acc, m) => acc + m.duration, 0)
+    const totalDuration = meetings.reduce((acc, m) => acc + (m.duration || 0), 0)
     const avgDuration = totalMeetings > 0 ? Math.round(totalDuration / totalMeetings) : 0
-    const uniqueParticipants = new Set(meetings.flatMap((m) => m.participants)).size
+    const uniqueParticipants = new Set(meetings.flatMap((m) => m.participants || [])).size
 
     return {
       totalMeetings,
@@ -135,6 +153,17 @@ export default function MeetingHistory({ meetings, onPlayRecording }: MeetingHis
         </select>
 
         <select
+          value={sectionFilter}
+          onChange={(e) => setSectionFilter(e.target.value)}
+          className="flex-1 px-3 py-2 rounded-lg bg-slate-700/50 border border-slate-600 text-white text-sm"
+        >
+          <option value="all">All Sections</option>
+          {sectionOptions.map(([id, name]) => (
+            <option key={id} value={id}>{name}</option>
+          ))}
+        </select>
+
+        <select
           value={sortBy}
           onChange={(e) => setSortBy(e.target.value as 'date' | 'duration')}
           className="flex-1 px-3 py-2 rounded-lg bg-slate-700/50 border border-slate-600 text-white text-sm"
@@ -166,11 +195,21 @@ export default function MeetingHistory({ meetings, onPlayRecording }: MeetingHis
                   <div className="flex flex-wrap gap-3 text-xs text-slate-400">
                     <span className="flex items-center gap-1">
                       <Calendar className="w-3 h-3" />
-                      {format(meeting.date, 'MMM dd, yyyy')}
+                      {(() => {
+                        try {
+                          const d = meeting.date instanceof Date ? meeting.date : new Date(meeting.date)
+                          return isNaN(d.getTime()) ? 'N/A' : format(d, 'MMM dd, yyyy')
+                        } catch { return 'N/A' }
+                      })()}
                     </span>
                     <span className="flex items-center gap-1">
                       <Clock className="w-3 h-3" />
-                      {format(meeting.date, 'hh:mm a')}
+                      {(() => {
+                        try {
+                          const d = meeting.date instanceof Date ? meeting.date : new Date(meeting.date)
+                          return isNaN(d.getTime()) ? 'N/A' : format(d, 'hh:mm a')
+                        } catch { return 'N/A' }
+                      })()}
                     </span>
                     <span className="flex items-center gap-1">
                       <TrendingUp className="w-3 h-3" />
@@ -183,6 +222,11 @@ export default function MeetingHistory({ meetings, onPlayRecording }: MeetingHis
                   </div>
 
                   <p className="text-xs text-slate-500 mt-1">Host: {meeting.host}</p>
+                  {meeting.sectionName && (
+                    <p className="text-xs text-cyan-300 mt-1">
+                      {meeting.branchName ? `${meeting.branchName} / ` : ''}{meeting.yearNumber ? `${meeting.yearNumber} Year / ` : ''}{meeting.sectionName}
+                    </p>
+                  )}
 
                   {meeting.summary && (
                     <div className="mt-2 text-xs text-cyan-100 bg-cyan-500/10 border border-cyan-400/20 rounded-md p-2">

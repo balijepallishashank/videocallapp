@@ -32,16 +32,26 @@ interface AcademicSidebarProps {
   isOpen: boolean
   selected: AcademicNavItem
   onSelect: (id: AcademicNavItem) => void
+  onClose?: () => void
 }
 
-export default function AcademicSidebar({ isOpen, selected, onSelect }: AcademicSidebarProps) {
+export default function AcademicSidebar({ isOpen, selected, onSelect, onClose }: AcademicSidebarProps) {
   return (
     <AnimatePresence initial={false}>
+      {isOpen && onClose && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+          className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-20 md:hidden"
+        />
+      )}
       <motion.aside
         initial={false}
         animate={{ width: isOpen ? 280 : 0, opacity: isOpen ? 1 : 0 }}
         transition={{ duration: 0.22, ease: 'easeInOut' }}
-        className="fixed left-0 top-0 h-screen z-30 overflow-hidden"
+        className="fixed left-0 top-0 h-screen z-30 overflow-hidden shadow-2xl md:shadow-none"
       >
         <div className="h-full w-[280px] glass-dark border-r border-white/10 bg-gradient-to-b from-slate-900/70 to-slate-950/70 backdrop-blur-lg">
           <div className="px-5 py-5 border-b border-white/10">

@@ -17,6 +17,8 @@ import AgoraRTC, {
 } from 'agora-rtc-sdk-ng'
 
 export const APP_ID = import.meta.env.VITE_AGORA_APP_ID as string | undefined
+// Token is fetched from backend (Cloud Function)
+export const TOKEN_SERVER_URL = import.meta.env.VITE_AGORA_TOKEN_SERVER_URL as string | undefined
 
 export interface RemoteParticipant {
   uid: UID
@@ -46,8 +48,25 @@ export async function joinChannel(
   }
 
   const agoraClient = getAgoraClient()
-  // token = null uses testing mode (no certificate required)
-  await agoraClient.join(APP_ID, channelName, null, uid)
+  
+  let token: string | null = null;
+  if (TOKEN_SERVER_URL) {
+    try {
+      const response = await fetch(`${TOKEN_SERVER_URL}?channelName=${channelName}&uid=${uid}`);
+      if (response.ok) {
+        const data = await response.json();
+        token = data.token;
+      } else {
+        console.warn('[Agora] Failed to fetch token from server:', response.statusText);
+      }
+    } catch (e) {
+      console.warn('[Agora] Error fetching token, falling back to null', e);
+    }
+  } else {
+    console.warn('[Agora] No VITE_AGORA_TOKEN_SERVER_URL provided, attempting to join without token.');
+  }
+
+  await agoraClient.join(APP_ID, channelName, token, uid)
 
   let localVideoTrack: ICameraVideoTrack | null = null
   let localAudioTrack: IMicrophoneAudioTrack | null = null
