@@ -52,3 +52,4 @@ logs
 # Lock files (optional - uncomment if you want to commit lock files)
 # package-lock.json
 # yarn.lock
+tsconfig.node.tsbuildinfo
