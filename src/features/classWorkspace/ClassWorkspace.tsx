@@ -232,13 +232,13 @@ export default function ClassWorkspace() {
 
     const lastMeeting = meetings.length > 0 
       ? [...meetings].sort((a, b) => {
-          const timeA = new Date(a.startedAt || a.scheduledAt || 0).getTime();
-          const timeB = new Date(b.startedAt || b.scheduledAt || 0).getTime();
+          const timeA = new Date(a.startedAt || a.scheduledAt || a.date || a.createdAt || 0).getTime();
+          const timeB = new Date(b.startedAt || b.scheduledAt || b.date || b.createdAt || 0).getTime();
           return timeB - timeA;
         })[0]
       : null;
     const lastMeetingDateStr = lastMeeting 
-      ? new Date(lastMeeting.startedAt || lastMeeting.scheduledAt || 0).toLocaleDateString() 
+      ? new Date(lastMeeting.startedAt || lastMeeting.scheduledAt || lastMeeting.date || lastMeeting.createdAt || 0).toLocaleDateString() 
       : 'N/A';
 
     const totalMaterials = materials.length;

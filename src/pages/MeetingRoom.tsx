@@ -106,6 +106,9 @@ export default function MeetingRoom({
   const isVideoOnRef = useRef(isVideoOn)
   useEffect(() => { isVideoOnRef.current = isVideoOn }, [isVideoOn])
 
+  const isMutedRef = useRef(isMuted)
+  useEffect(() => { isMutedRef.current = isMuted }, [isMuted])
+
   // Agora tracks
   const [agoraVideoTrack, setAgoraVideoTrack] = useState<ICameraVideoTrack | null>(null)
   const [agoraAudioTrack, setAgoraAudioTrack] = useState<IMicrophoneAudioTrack | null>(null)
@@ -288,8 +291,8 @@ export default function MeetingRoom({
   const initializeMedia = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      stream.getAudioTracks().forEach((t) => (t.enabled = !isMuted))
-      stream.getVideoTracks().forEach((t) => (t.enabled = isVideoOn))
+      stream.getAudioTracks().forEach((t) => (t.enabled = !isMutedRef.current))
+      stream.getVideoTracks().forEach((t) => (t.enabled = isVideoOnRef.current))
 
       localStreamRef.current = stream
       setLocalStream(stream)
@@ -316,7 +319,7 @@ export default function MeetingRoom({
       // Do not fall back to dev/mock media streams — require real devices for realtime meetings
       return false
     }
-  }, [isMuted, isVideoOn])
+  }, [])
 
   useEffect(() => {
     initializeMedia()

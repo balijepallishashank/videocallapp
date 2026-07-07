@@ -46,6 +46,8 @@ export interface WorkspaceMeeting {
   meetingCode?: string
   startedAt?: string
   scheduledAt?: string
+  date?: string
+  createdAt?: string
   duration?: number
   host?: string
 }
