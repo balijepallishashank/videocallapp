@@ -50,6 +50,7 @@ export default function TeamsView() {
   const [formName, setFormName] = useState('')
   const [formDesc, setFormDesc] = useState('')
   const [formClassId, setFormClassId] = useState('')
+  const [formSelectedStudents, setFormSelectedStudents] = useState<any[]>([])
   const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
@@ -90,11 +91,14 @@ export default function TeamsView() {
         classId: formClassId,
         className: cls?.name || '',
         facultyId: currentUser.id,
+        memberIds: formSelectedStudents.map((s) => s.id),
+        memberNames: formSelectedStudents.map((s) => s.name),
       })
       addToast(`Team "${formName}" created!`, 'success')
       setFormName('')
       setFormDesc('')
       setFormClassId('')
+      setFormSelectedStudents([])
       setShowCreateModal(false)
     } catch (err) {
       addToast(err instanceof Error ? err.message : 'Failed to create team.', 'error')
@@ -381,6 +385,38 @@ export default function TeamsView() {
                     className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50 resize-none"
                   />
                 </div>
+
+                {formClassId && classMembersMap[formClassId] && classMembersMap[formClassId].length > 0 && (
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Select Students</label>
+                    <div className="max-h-40 overflow-y-auto rounded-2xl border border-white/10 bg-slate-900/60 p-2 space-y-1">
+                      {classMembersMap[formClassId].map((student: any) => {
+                        const isSelected = formSelectedStudents.some(s => s.id === student.id)
+                        return (
+                          <label key={student.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setFormSelectedStudents(prev => [...prev, student])
+                                } else {
+                                  setFormSelectedStudents(prev => prev.filter(s => s.id !== student.id))
+                                }
+                              }}
+                              className="w-4 h-4 rounded border-white/20 bg-slate-800 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-900"
+                            />
+                            <div className="min-w-0">
+                              <div className="text-sm font-semibold text-white truncate">{student.name || student.studentName}</div>
+                              <div className="text-[11px] text-slate-500 truncate">{student.email || 'Student'}</div>
+                            </div>
+                          </label>
+                        )
+                      })}
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1">{formSelectedStudents.length} student(s) selected</p>
+                  </div>
+                )}
 
                 <div className="flex gap-3 pt-2">
                   <button

@@ -40,33 +40,36 @@ export function getAgoraClient(): IAgoraRTCClient {
   return client
 }
 
-/**
- * Fetch an RTC token from the token server.
- * Falls back to null (tokenless mode) on any failure.
- */
-async function fetchToken(channelName: string, uid: string): Promise<string | null> {
+async function fetchToken(channelName: string, uid: string, retries = 2): Promise<string | null> {
   if (!TOKEN_SERVER_URL) {
     console.warn('[Agora] No VITE_AGORA_TOKEN_SERVER_URL — joining without token (only works if App Certificate is disabled).')
     return null
   }
-  try {
-    const url = `${TOKEN_SERVER_URL}?channelName=${encodeURIComponent(channelName)}&uid=${encodeURIComponent(uid)}`
-    const response = await fetch(url, { signal: AbortSignal.timeout(8000) })
-    if (!response.ok) {
-      const body = await response.text().catch(() => '')
-      console.warn(`[Agora] Token server returned ${response.status}: ${body}`)
-      return null
+  
+  let attempt = 0;
+  while (attempt <= retries) {
+    try {
+      const url = `${TOKEN_SERVER_URL}?channelName=${encodeURIComponent(channelName)}&uid=${encodeURIComponent(uid)}`
+      const response = await fetch(url, { signal: AbortSignal.timeout(8000) })
+      if (!response.ok) {
+        const body = await response.text().catch(() => '')
+        throw new Error(`Token server returned ${response.status}: ${body}`)
+      }
+      const data = await response.json()
+      if (!data.token) {
+        throw new Error('Token server response missing "token" field')
+      }
+      return data.token as string
+    } catch (e) {
+      console.warn(`[Agora] Token fetch attempt ${attempt + 1} failed:`, e)
+      if (attempt === retries) {
+        throw new Error(`Failed to fetch Agora token after ${retries + 1} attempts. Is the token server running?`)
+      }
+      attempt++;
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
-    const data = await response.json()
-    if (!data.token) {
-      console.warn('[Agora] Token server response missing "token" field:', data)
-      return null
-    }
-    return data.token as string
-  } catch (e) {
-    console.warn('[Agora] Could not reach token server — joining without token:', e)
-    return null
   }
+  return null;
 }
 
 export async function joinChannel(

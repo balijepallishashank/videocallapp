@@ -99,6 +99,7 @@ export default function MeetingRoom({
 
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isScreenSharing, setIsScreenSharing] = useState(false)
+  const [remoteScreenSharerUid, setRemoteScreenSharerUid] = useState<string | null>(null)
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
 
@@ -147,7 +148,7 @@ export default function MeetingRoom({
     return () => unsubscribe()
   }, [meetingId])
 
-  // Subscribe to live meeting state (whiteboard, speaking queue)
+  // Subscribe to live meeting state (whiteboard, speaking queue, screen sharing)
   useEffect(() => {
     if (!meetingId) return
     const unsubscribe = subscribeToMeetingState(meetingId, (state) => {
@@ -157,6 +158,9 @@ export default function MeetingRoom({
         }
         if (state.speakingQueue !== undefined) {
           setSpeakingQueue(state.speakingQueue)
+        }
+        if (state.screenSharerUid !== undefined) {
+          setRemoteScreenSharerUid(state.screenSharerUid)
         }
       }
     })
@@ -599,14 +603,26 @@ export default function MeetingRoom({
         const screenTrack = await createScreenVideoTrack()
         if (screenTrack) {
           screenVideoTrackRef.current = screenTrack
-          screenTrack.on('track-ended', () => {
-            agoraClient.unpublish(screenTrack).catch(console.error)
+          
+          screenTrack.on('track-ended', async () => {
+            try {
+              await agoraClient.unpublish(screenTrack)
+              if (agoraVideoTrackRef.current && isVideoOn) {
+                await agoraClient.publish(agoraVideoTrackRef.current)
+              }
+            } catch (e) { console.error(e) }
             screenVideoTrackRef.current = null
             setIsScreenSharing(false)
+            updateMeetingState(meetingId, { screenSharerUid: null }).catch(console.error)
           })
           
+          if (agoraVideoTrack) {
+            await agoraClient.unpublish(agoraVideoTrack)
+          }
           await agoraClient.publish(screenTrack)
+          
           setIsScreenSharing(true)
+          updateMeetingState(meetingId, { screenSharerUid: currentUser.id }).catch(console.error)
           addToast('Screen sharing started', 'success')
         }
       } catch (err) {
@@ -618,11 +634,15 @@ export default function MeetingRoom({
       if (screenTrack) {
         try {
           await agoraClient.unpublish(screenTrack)
+          if (agoraVideoTrack && isVideoOn) {
+            await agoraClient.publish(agoraVideoTrack)
+          }
           screenTrack.close()
         } catch (e) {}
       }
       screenVideoTrackRef.current = null
       setIsScreenSharing(false)
+      updateMeetingState(meetingId, { screenSharerUid: null }).catch(console.error)
       addToast('Screen sharing stopped', 'info')
     }
   }
@@ -765,7 +785,7 @@ export default function MeetingRoom({
   }
 
   // Layout calculations
-  const isSharingOrWhiteboardActive = isScreenSharing || showWhiteboard
+  const isSharingOrWhiteboardActive = isScreenSharing || showWhiteboard || remoteScreenSharerUid
 
   const getGridColsClass = (count: number) => {
     if (count <= 1) return 'grid-cols-1'
@@ -862,6 +882,23 @@ export default function MeetingRoom({
                 />
                 <div className="absolute bottom-4 left-4 bg-black/60 text-white px-3 py-1.5 rounded-lg text-xs font-semibold backdrop-blur-sm">
                   You are sharing your screen
+                </div>
+              </div>
+            ) : remoteScreenSharerUid && remoteScreenSharerUid !== currentUser.id ? (
+              <div className="w-full h-full relative flex items-center justify-center bg-slate-950 rounded-2xl overflow-hidden border border-white/10">
+                {(() => {
+                  const remote = remoteParticipants.find((r) => String(r.uid) === remoteScreenSharerUid)
+                  const userMatch = allParticipants.find(p => p.id === remoteScreenSharerUid)
+                  return remote?.videoTrack ? (
+                    <AgoraVideoTile remoteVideoTrack={remote.videoTrack} className="object-contain" />
+                  ) : (
+                    <div className="text-slate-400 text-sm">
+                      Waiting for {userMatch?.name || 'user'}'s screen share to connect...
+                    </div>
+                  )
+                })()}
+                <div className="absolute bottom-4 left-4 bg-black/60 text-white px-3 py-1.5 rounded-lg text-xs font-semibold backdrop-blur-sm">
+                  {allParticipants.find(p => p.id === remoteScreenSharerUid)?.name || 'Someone'} is sharing their screen
                 </div>
               </div>
             ) : (

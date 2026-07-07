@@ -108,5 +108,20 @@ service cloud.firestore {
       allow create: if isAuthenticated();
       allow update, delete: if isFaculty() || resource.data.requestedBy == request.auth.uid;
     }
+
+    // Teams — faculty-created study groups within a class
+    match /teams/{teamId} {
+      // Any authenticated user can read teams (members filter client-side)
+      allow read: if isAuthenticated();
+      // Only faculty can create a team (and must own it)
+      allow create: if isFaculty() && request.resource.data.facultyId == request.auth.uid;
+      // Only the owning faculty can update or delete their team
+      allow update, delete: if isFaculty() && resource.data.facultyId == request.auth.uid;
+    }
+
+    // Meeting codes — used for uniqueness checks when generating invite codes
+    match /meeting_codes/{codeId} {
+      allow read, write: if isAuthenticated();
+    }
   }
 }
