@@ -7,16 +7,17 @@
  * Agora is not configured (no App ID).
  */
 import { useEffect, useRef } from 'react'
-import type { ICameraVideoTrack, IRemoteVideoTrack } from '../../services/video'
+import type { ILocalVideoTrack, IRemoteVideoTrack } from '../../services/video'
 
 interface AgoraVideoTileProps {
-  /** Agora camera track for the LOCAL user */
-  localVideoTrack?: ICameraVideoTrack | null
+  /** Agora video track for the LOCAL user (camera or screen) */
+  localVideoTrack?: ILocalVideoTrack | null
   /** Agora video track for a REMOTE user */
   remoteVideoTrack?: IRemoteVideoTrack | null
   /** Fallback MediaStream (used when Agora is not configured) */
   fallbackStream?: MediaStream | null
   className?: string
+  fit?: 'cover' | 'contain'
 }
 
 export default function AgoraVideoTile({
@@ -24,6 +25,7 @@ export default function AgoraVideoTile({
   remoteVideoTrack,
   fallbackStream,
   className = '',
+  fit = 'cover',
 }: AgoraVideoTileProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const fallbackVideoRef = useRef<HTMLVideoElement>(null)
@@ -31,16 +33,16 @@ export default function AgoraVideoTile({
   // Play Agora local camera track
   useEffect(() => {
     if (!localVideoTrack || !containerRef.current) return
-    localVideoTrack.play(containerRef.current)
+    localVideoTrack.play(containerRef.current, { fit })
     return () => localVideoTrack.stop()
-  }, [localVideoTrack])
+  }, [localVideoTrack, fit])
 
   // Play Agora remote video track
   useEffect(() => {
     if (!remoteVideoTrack || !containerRef.current) return
-    remoteVideoTrack.play(containerRef.current)
+    remoteVideoTrack.play(containerRef.current, { fit })
     return () => remoteVideoTrack.stop()
-  }, [remoteVideoTrack])
+  }, [remoteVideoTrack, fit])
 
   // Fallback: pipe a plain MediaStream into a <video> element
   useEffect(() => {

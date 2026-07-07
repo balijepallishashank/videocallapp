@@ -55,6 +55,10 @@ service cloud.firestore {
       allow create: if isFaculty() || isAuthenticated();
       allow update: if isFaculty() || (isAuthenticated() && resource.data.facultyId == request.auth.uid);
       allow delete: if isFaculty() || (isAuthenticated() && resource.data.facultyId == request.auth.uid);
+
+      match /whiteboard/{strokeId} {
+        allow read, write: if isAuthenticated();
+      }
     }
 
     match /scheduled_meetings/{meetingId} {

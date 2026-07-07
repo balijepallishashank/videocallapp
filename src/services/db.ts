@@ -917,7 +917,7 @@ export interface WhiteboardStroke {
 }
 
 export const saveWhiteboardStroke = async (meetingId: string, stroke: Omit<WhiteboardStroke, 'id' | 'timestamp'>) => {
-  const whiteboardRef = collection(db, 'meetings', meetingId, 'whiteboard');
+  const whiteboardRef = collection(db, 'live_meetings', meetingId, 'whiteboard');
   const docRef = await addDoc(whiteboardRef, {
     ...stroke,
     timestamp: new Date().toISOString()
@@ -937,7 +937,7 @@ export const clearWhiteboard = async (meetingId: string, senderId: string, sende
 
 export const subscribeToWhiteboardStrokes = (meetingId: string, callback: (strokes: WhiteboardStroke[]) => void, onError?: (error: any) => void) => {
   if (!meetingId) return () => { };
-  const whiteboardRef = collection(db, 'meetings', meetingId, 'whiteboard');
+  const whiteboardRef = collection(db, 'live_meetings', meetingId, 'whiteboard');
   return onSnapshot(whiteboardRef, {
     next: (snapshot) => {
       const strokes = snapshot.docs.map(doc => {

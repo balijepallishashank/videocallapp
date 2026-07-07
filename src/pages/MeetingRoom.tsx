@@ -103,6 +103,9 @@ export default function MeetingRoom({
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
 
+  const isVideoOnRef = useRef(isVideoOn)
+  useEffect(() => { isVideoOnRef.current = isVideoOn }, [isVideoOn])
+
   // Agora tracks
   const [agoraVideoTrack, setAgoraVideoTrack] = useState<ICameraVideoTrack | null>(null)
   const [agoraAudioTrack, setAgoraAudioTrack] = useState<IMicrophoneAudioTrack | null>(null)
@@ -245,7 +248,7 @@ export default function MeetingRoom({
   const chatEndRef = useRef<HTMLDivElement>(null)
 
   const videoRef = useRef<HTMLVideoElement>(null)
-  const screenShareStreamRef = useRef<MediaStream | null>(null)
+
   const processingCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const stopProcessingRef = useRef<(() => void) | null>(null)
   const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: 'info' | 'success' | 'warning' | 'error' }>>([])
@@ -607,7 +610,7 @@ export default function MeetingRoom({
           screenTrack.on('track-ended', async () => {
             try {
               await agoraClient.unpublish(screenTrack)
-              if (agoraVideoTrackRef.current && isVideoOn) {
+              if (agoraVideoTrackRef.current && isVideoOnRef.current) {
                 await agoraClient.publish(agoraVideoTrackRef.current)
               }
             } catch (e) { console.error(e) }
@@ -647,22 +650,30 @@ export default function MeetingRoom({
     }
   }
 
-  const toggleVideo = () => {
+  const toggleVideo = async () => {
     const newVideoOn = !isVideoOn
     setIsVideoOn(newVideoOn)
     if (agoraVideoTrack) {
-      agoraVideoTrack.setEnabled(newVideoOn)
+      try {
+        await agoraVideoTrack.setMuted(!newVideoOn)
+      } catch (err) {
+        console.error('Failed to toggle video', err)
+      }
     } else if (localStream) {
       const videoTrack = localStream.getVideoTracks()[0]
       if (videoTrack) videoTrack.enabled = newVideoOn
     }
   }
 
-  const toggleMute = () => {
+  const toggleMute = async () => {
     const newMuted = !isMuted
     setIsMuted(newMuted)
     if (agoraAudioTrack) {
-      agoraAudioTrack.setEnabled(!newMuted)
+      try {
+        await agoraAudioTrack.setMuted(newMuted)
+      } catch (err) {
+        console.error('Failed to toggle audio', err)
+      }
     } else if (localStream) {
       const audioTrack = localStream.getAudioTracks()[0]
       if (audioTrack) audioTrack.enabled = !newMuted
@@ -869,17 +880,7 @@ export default function MeetingRoom({
               </div>
             ) : isScreenSharing ? (
               <div className="w-full h-full relative flex items-center justify-center bg-slate-950 rounded-2xl overflow-hidden border border-white/10">
-                <video
-                  ref={(el) => {
-                    if (el && screenShareStreamRef.current) {
-                      el.srcObject = screenShareStreamRef.current
-                      el.play().catch(err => console.error(err))
-                    }
-                  }}
-                  autoPlay
-                  playsInline
-                  className="w-full h-full object-contain"
-                />
+                <AgoraVideoTile localVideoTrack={screenVideoTrackRef.current} className="object-contain" fit="contain" />
                 <div className="absolute bottom-4 left-4 bg-black/60 text-white px-3 py-1.5 rounded-lg text-xs font-semibold backdrop-blur-sm">
                   You are sharing your screen
                 </div>
@@ -890,7 +891,7 @@ export default function MeetingRoom({
                   const remote = remoteParticipants.find((r) => String(r.uid) === remoteScreenSharerUid)
                   const userMatch = allParticipants.find(p => p.id === remoteScreenSharerUid)
                   return remote?.videoTrack ? (
-                    <AgoraVideoTile remoteVideoTrack={remote.videoTrack} className="object-contain" />
+                    <AgoraVideoTile remoteVideoTrack={remote.videoTrack} className="object-contain" fit="contain" />
                   ) : (
                     <div className="text-slate-400 text-sm">
                       Waiting for {userMatch?.name || 'user'}'s screen share to connect...
