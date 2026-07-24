@@ -7,11 +7,29 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // ─── CORS ───────────────────────────────────────────────────────────────────
-// Allow all origins in development; restrict to your Firebase Hosting domain
-// in production by setting ALLOWED_ORIGIN env var on Render.
-const allowedOrigin = process.env.ALLOWED_ORIGIN || '*';
+// ALLOWED_ORIGIN can be:
+//   *                          → allow all (good for dev / public API)
+//   a single domain            → e.g. https://videocallapp-2ee79.web.app
+//   comma-separated domains    → e.g. https://a.web.app,https://b.web.app
+// On Render.com set ALLOWED_ORIGIN to '*' so any browser can fetch a token.
+const rawAllowedOrigin = process.env.ALLOWED_ORIGIN || '*';
+
+// Build a list of allowed origins from a comma-separated string
+const allowedOrigins = rawAllowedOrigin === '*'
+  ? '*'
+  : rawAllowedOrigin.split(',').map((o) => o.trim()).filter(Boolean);
+
 app.use(cors({
-  origin: allowedOrigin,
+  origin: (origin, callback) => {
+    // Allow requests with no Origin header (e.g. curl, Postman, server-to-server)
+    if (!origin) return callback(null, true);
+    // Allow wildcard
+    if (allowedOrigins === '*') return callback(null, true);
+    // Allow if the request origin is in the list
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // Reject everything else
+    return callback(new Error(`CORS blocked for origin: ${origin}`), false);
+  },
   methods: ['GET', 'OPTIONS'],
 }));
 
