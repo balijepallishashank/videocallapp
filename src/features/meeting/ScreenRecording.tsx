@@ -30,19 +30,50 @@ export default function ScreenRecording({ videoStream, onToast, classId, meeting
   const timerRef = useRef<number | null>(null)
   const startTimeRef = useRef<number>(0)
   const currentMimeTypeRef = useRef<string>('video/webm')
+  const displayStreamRef = useRef<MediaStream | null>(null)
 
   const startRecording = async () => {
-    if (!videoStream) {
-      onToast('No video stream available', 'error')
-      return
-    }
-
     try {
-      // Combine video and audio streams
-      const audioTracks = recordAudio ? videoStream.getAudioTracks() : []
-      const videoTracks = videoStream.getVideoTracks()
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: 'browser' } as any,
+        audio: true
+      })
+      displayStreamRef.current = displayStream
+
+      displayStream.getVideoTracks()[0].onended = () => {
+        stopRecording()
+      }
+
+      const audioTracks: MediaStreamTrack[] = []
+
+      if (displayStream.getAudioTracks().length > 0) {
+        audioTracks.push(...displayStream.getAudioTracks())
+      }
+
+      if (recordAudio && videoStream && videoStream.getAudioTracks().length > 0) {
+        const localMicTrack = videoStream.getAudioTracks()[0]
+        
+        if (audioTracks.length > 0) {
+          const audioContext = new AudioContext()
+          const dest = audioContext.createMediaStreamDestination()
+          
+          const source1 = audioContext.createMediaStreamSource(new MediaStream([audioTracks[0]]))
+          const source2 = audioContext.createMediaStreamSource(new MediaStream([localMicTrack]))
+          
+          source1.connect(dest)
+          source2.connect(dest)
+          
+          audioTracks.length = 0
+          audioTracks.push(dest.stream.getAudioTracks()[0])
+        } else {
+          audioTracks.push(localMicTrack)
+        }
+      }
       
-      const combinedStream = new MediaStream([...videoTracks, ...audioTracks])
+      const combinedStream = new MediaStream([
+        ...displayStream.getVideoTracks(),
+        ...audioTracks
+      ])
 
       const mimeTypes = [
         'video/webm;codecs=vp9',
@@ -137,6 +168,10 @@ export default function ScreenRecording({ videoStream, onToast, classId, meeting
       if (timerRef.current) {
         window.clearInterval(timerRef.current)
         timerRef.current = null
+      }
+      if (displayStreamRef.current) {
+        displayStreamRef.current.getTracks().forEach(track => track.stop())
+        displayStreamRef.current = null
       }
     }
   }
