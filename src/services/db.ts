@@ -66,6 +66,10 @@ export const updateUserPresenceStatus = async (userId: string, status: 'online' 
 const assertFacultyRole = async () => {
   const user = auth.currentUser;
   if (!user) throw new Error('Unauthenticated user.');
+  const snap = await getDoc(doc(db, 'users', user.uid));
+  if (!snap.exists() || snap.data().role !== 'faculty') {
+    throw new Error('Unauthorized: faculty role required.');
+  }
 };
 
 // ========================
@@ -531,9 +535,22 @@ export const updateDoubtRequestStatus = async (requestId: string, status: 'Sent'
 // SCHEDULED MEETINGS
 // ========================
 
+export interface MeetingSettings {
+  waitingRoom?: boolean;
+  allowChat?: boolean;
+  allowReactions?: boolean;
+  allowHandRaise?: boolean;
+  allowScreenShare?: boolean;
+  allowStudentMic?: boolean;
+  allowStudentCamera?: boolean;
+  isLocked?: boolean;
+}
+
 export interface ScheduledMeeting {
   id: string;
   meetingId: string;
+  classId: string;
+  className?: string;
   title: string;
   description?: string;
   facultyId: string;
@@ -555,6 +572,7 @@ export interface ScheduledMeeting {
   recurring?: string;
   reminder?: number;
   meetingLink?: string;
+  settings?: MeetingSettings;
 }
 
 export interface MeetingSummary {
@@ -607,6 +625,11 @@ export interface RecordingRecord {
 
 export const createScheduledMeeting = async (meeting: Omit<ScheduledMeeting, 'id' | 'createdAt' | 'updatedAt'>) => {
   await assertFacultyRole();
+  // Validate future date/time (service-layer enforcement)
+  const scheduledAt = new Date(meeting.scheduledDate);
+  if (scheduledAt <= new Date()) {
+    throw new Error('Please select a future date and time.');
+  }
   const docRef = doc(collection(db, 'scheduled_meetings'));
   await setDoc(docRef, {
     ...meeting,
@@ -823,6 +846,13 @@ export const subscribeToStudentAttendance = (studentId: string, callback: (atten
 
 export const updateScheduledMeeting = async (meetingId: string, updates: Partial<ScheduledMeeting>) => {
   await assertFacultyRole();
+  // Validate future date/time if scheduledDate is being updated
+  if (updates.scheduledDate) {
+    const scheduledAt = new Date(updates.scheduledDate);
+    if (scheduledAt <= new Date()) {
+      throw new Error('Please select a future date and time.');
+    }
+  }
   const docRef = doc(db, 'scheduled_meetings', meetingId);
   await setDoc(docRef, { ...updates, updatedAt: new Date().toISOString() }, { merge: true });
 };
@@ -841,6 +871,7 @@ export const subscribeToScheduledMeetings = (callback: (meetings: ScheduledMeeti
         const data = doc.data();
         return {
           ...data,
+          id: doc.id,
           createdAt: parseFirestoreDate(data.createdAt),
           updatedAt: parseFirestoreDate(data.updatedAt)
         } as ScheduledMeeting;
@@ -852,6 +883,144 @@ export const subscribeToScheduledMeetings = (callback: (meetings: ScheduledMeeti
       else console.error('Firestore subscribeToScheduledMeetings error:', err);
     }
   });
+};
+
+// Faculty-scoped subscription — queries with where('facultyId','==',facultyId)
+// so Firestore security rules can correctly validate the filtered query.
+export const subscribeToScheduledMeetingsByFacultyId = (
+  facultyId: string,
+  callback: (meetings: ScheduledMeeting[]) => void,
+  onError?: (error: any) => void
+) => {
+  if (!facultyId) {
+    callback([]);
+    return () => {};
+  }
+  const q = query(collection(db, 'scheduled_meetings'), where('facultyId', '==', facultyId));
+  return onSnapshot(q, {
+    next: (snapshot) => {
+      const meetings = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          ...data,
+          id: doc.id,
+          createdAt: parseFirestoreDate(data.createdAt),
+          updatedAt: parseFirestoreDate(data.updatedAt)
+        } as ScheduledMeeting;
+      });
+      callback(meetings);
+    },
+    error: (err) => {
+      if (onError) onError(err);
+      else console.error('Firestore subscribeToScheduledMeetingsByFacultyId error:', err);
+    }
+  });
+};
+
+// Class-scoped subscription for students — only loads meetings for their enrolled classes
+export const subscribeToScheduledMeetingsByClassIds = (
+  classIds: string[],
+  callback: (meetings: ScheduledMeeting[]) => void,
+  onError?: (error: any) => void
+) => {
+  if (classIds.length === 0) {
+    callback([]);
+    return () => {};
+  }
+  const chunked = classIds.slice(0, 30); // Firestore 'in' limit
+  const q = query(collection(db, 'scheduled_meetings'), where('classId', 'in', chunked));
+  return onSnapshot(q, {
+    next: (snapshot) => {
+      const meetings = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          ...data,
+          id: doc.id,
+          createdAt: parseFirestoreDate(data.createdAt),
+          updatedAt: parseFirestoreDate(data.updatedAt)
+        } as ScheduledMeeting;
+      });
+      callback(meetings);
+    },
+    error: (err) => {
+      if (onError) onError(err);
+      else console.error('Firestore subscribeToScheduledMeetingsByClassIds error:', err);
+    }
+  });
+};
+
+// ========================
+// SCHEDULING NOTIFICATIONS
+// ========================
+
+export const notifyStudentsOfNewMeeting = async (
+  classId: string,
+  meetingId: string,
+  title: string,
+  dateStr: string,
+  timeStr: string
+) => {
+  const membersSnap = await getDocs(query(collection(db, 'class_members'), where('classId', '==', classId)));
+  await Promise.allSettled(
+    membersSnap.docs.map((memberDoc) => {
+      const member = memberDoc.data();
+      return createNotification({
+        userId: member.studentId,
+        title: `New meeting scheduled: ${title}`,
+        description: `Scheduled on ${dateStr} at ${timeStr}.`,
+        type: 'info',
+        priority: 'medium',
+        classId,
+        meetingId,
+      });
+    })
+  );
+};
+
+export const notifyStudentsOfRescheduledMeeting = async (
+  classId: string,
+  meetingId: string,
+  title: string,
+  dateStr: string,
+  timeStr: string
+) => {
+  const membersSnap = await getDocs(query(collection(db, 'class_members'), where('classId', '==', classId)));
+  await Promise.allSettled(
+    membersSnap.docs.map((memberDoc) => {
+      const member = memberDoc.data();
+      return createNotification({
+        userId: member.studentId,
+        title: `Meeting rescheduled: ${title}`,
+        description: `${title} has been rescheduled to ${dateStr} at ${timeStr}.`,
+        type: 'warning',
+        priority: 'medium',
+        classId,
+        meetingId,
+      });
+    })
+  );
+};
+
+export const notifyStudentsOfCancelledMeeting = async (
+  classId: string,
+  meetingId: string,
+  title: string
+) => {
+  const membersSnap = await getDocs(query(collection(db, 'class_members'), where('classId', '==', classId)));
+  await Promise.allSettled(
+    membersSnap.docs.map((memberDoc) => {
+      const member = memberDoc.data();
+      return createNotification({
+        userId: member.studentId,
+        title: `Meeting cancelled: ${title}`,
+        description: `${title} has been cancelled.`,
+        type: 'error',
+        priority: 'medium',
+        classId,
+        meetingId,
+      });
+    })
+  );
 };
 
 // ========================

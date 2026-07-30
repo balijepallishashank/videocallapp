@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { motion } from 'framer-motion'
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, BookOpen, Play } from 'lucide-react'
-import { subscribeToScheduledMeetings, subscribeToClasses, startLiveMeeting } from '../../services/db'
+import { motion, AnimatePresence } from 'framer-motion'
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, BookOpen, Play, Pencil } from 'lucide-react'
+import { subscribeToScheduledMeetings, subscribeToClasses, startLiveMeeting, type ScheduledMeeting } from '../../services/db'
+import ScheduledMeetingForm from '../scheduling/components/ScheduledMeetingForm'
 
 interface OutletContext {
   currentUser: any
@@ -37,9 +38,11 @@ export default function CalendarView() {
   const { currentUser, isFaculty, addToast } = useOutletContext<OutletContext>()
   const [scheduledMeetings, setScheduledMeetings] = useState<any[]>([])
   const [classes, setClasses] = useState<any[]>([])
+  const [classesList, setClassesList] = useState<any[]>([])
   const [currentDate, setCurrentDate] = useState(new Date())
   const [view, setView] = useState<'month' | 'week'>('month')
   const [selectedDay, setSelectedDay] = useState<Date | null>(null)
+  const [editingMeeting, setEditingMeeting] = useState<ScheduledMeeting | null>(null)
 
   useEffect(() => {
     if (!currentUser) return
@@ -50,6 +53,12 @@ export default function CalendarView() {
       unsubClasses()
     }
   }, [currentUser])
+
+  // Faculty: also load their classes list for the edit form
+  useEffect(() => {
+    if (!currentUser || !isFaculty) return
+    return subscribeToClasses('faculty', currentUser.id, setClassesList)
+  }, [currentUser, isFaculty])
 
   // Map classId → color index
   const classColorMap = useMemo(() => {
@@ -133,6 +142,10 @@ export default function CalendarView() {
     } catch {
       addToast('Failed to start meeting.', 'error')
     }
+  }
+
+  const handleEditMeeting = (meeting: ScheduledMeeting) => {
+    setEditingMeeting(meeting)
   }
 
   const selectedDayMeetings = selectedDay ? getMeetingsForDay(selectedDay) : []
@@ -326,6 +339,7 @@ export default function CalendarView() {
             <div className="space-y-3">
               {selectedDayMeetings.map((m) => {
                 const colorIdx = classColorMap[m.classId] ?? 0
+                const isOwner = isFaculty && m.facultyId === currentUser?.id
                 return (
                   <motion.div
                     key={m.id}
@@ -340,15 +354,30 @@ export default function CalendarView() {
                         {m.duration && <span>{m.duration} min</span>}
                       </div>
                       {m.description && <div className="text-[11px] opacity-60 line-clamp-1">{m.description}</div>}
+                      {!isFaculty && m.facultyName && (
+                        <div className="text-[11px] opacity-60">By {m.facultyName}</div>
+                      )}
                     </div>
-                    {isFaculty && (
-                      <button
-                        onClick={() => handleStartNow(m)}
-                        className="flex-shrink-0 flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 px-3 py-1.5 text-xs font-bold transition"
-                      >
-                        <Play className="w-3 h-3" />
-                        Start
-                      </button>
+                    {isOwner && (
+                      <div className="flex flex-shrink-0 gap-2">
+                        <button
+                          id={`cal-edit-${m.id}`}
+                          onClick={() => handleEditMeeting(m as ScheduledMeeting)}
+                          className="flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 px-3 py-1.5 text-xs font-bold transition"
+                          title="Edit meeting"
+                        >
+                          <Pencil className="w-3 h-3" />
+                          Edit
+                        </button>
+                        <button
+                          id={`cal-start-${m.id}`}
+                          onClick={() => handleStartNow(m)}
+                          className="flex items-center gap-1.5 rounded-xl bg-white/20 hover:bg-white/30 px-3 py-1.5 text-xs font-bold transition"
+                        >
+                          <Play className="w-3 h-3" />
+                          Start
+                        </button>
+                      </div>
                     )}
                   </motion.div>
                 )
@@ -372,6 +401,20 @@ export default function CalendarView() {
           </div>
         </div>
       )}
+
+      {/* Edit meeting form — faculty only */}
+      <AnimatePresence>
+        {editingMeeting && isFaculty && currentUser && (
+          <ScheduledMeetingForm
+            editingMeeting={editingMeeting}
+            classesList={classesList}
+            currentUser={currentUser}
+            onSave={() => setEditingMeeting(null)}
+            onClose={() => setEditingMeeting(null)}
+            addToast={addToast}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

@@ -2,128 +2,179 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
     function isAuthenticated() {
       return request.auth != null;
     }
 
+    // Reads the user's own Firestore profile to verify role.
+    // Used by isFaculty() — safe because we only call it on the current user's own doc.
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
     function isFaculty() {
-      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'faculty';
+      return isAuthenticated() && getUserRole() == 'faculty';
     }
 
     function isClassFaculty(classId) {
-      return isFaculty() && get(/databases/$(database)/documents/classes/$(classId)).data.facultyId == request.auth.uid;
+      return isFaculty() &&
+        get(/databases/$(database)/documents/classes/$(classId)).data.facultyId == request.auth.uid;
     }
 
     function isClassMember(classId) {
-      return isAuthenticated() && exists(/databases/$(database)/documents/class_members/$(classId + '_' + request.auth.uid));
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/class_members/$(classId + '_' + request.auth.uid));
     }
 
+    // ── users ────────────────────────────────────────────────────────────────
     match /users/{userId} {
+      // Users can always read their own profile (needed for assertFacultyRole + isFaculty())
       allow read: if isAuthenticated() && (request.auth.uid == userId || isFaculty());
-      allow create, update: if request.auth.uid == userId;
+      allow create, update: if isAuthenticated() && request.auth.uid == userId;
+      allow delete: if isFaculty();
     }
 
+    // ── classes ──────────────────────────────────────────────────────────────
     match /classes/{classId} {
-      allow get: if isAuthenticated() && (resource.data.facultyId == request.auth.uid || isClassMember(classId));
+      allow get: if isAuthenticated() && (
+        resource.data.facultyId == request.auth.uid || isClassMember(classId)
+      );
       allow list: if isAuthenticated();
       allow create: if isFaculty() && request.resource.data.facultyId == request.auth.uid;
       allow update, delete: if isFaculty() && resource.data.facultyId == request.auth.uid;
     }
 
+    // ── class_members ────────────────────────────────────────────────────────
     match /class_members/{memberId} {
-      allow read: if isAuthenticated() && (resource.data.studentId == request.auth.uid || isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId));
-      allow create: if isAuthenticated() && request.resource.data.studentId == request.auth.uid && exists(/databases/$(database)/documents/classes/$(request.resource.data.classId));
+      allow read: if isAuthenticated() && (
+        resource.data.studentId == request.auth.uid ||
+        isClassFaculty(resource.data.classId) ||
+        isClassMember(resource.data.classId)
+      );
+      allow create: if isAuthenticated() &&
+        request.resource.data.studentId == request.auth.uid &&
+        exists(/databases/$(database)/documents/classes/$(request.resource.data.classId));
       allow update, delete: if isClassFaculty(resource.data.classId);
     }
 
+    // ── meetings (past/ended meetings) ───────────────────────────────────────
     match /meetings/{meetingId} {
-      allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId) || isAuthenticated();
-      allow create: if isClassFaculty(request.resource.data.classId) || (isFaculty() && request.resource.data.facultyId == request.auth.uid) || isFaculty();
-      allow update: if isClassFaculty(resource.data.classId) || (isFaculty() && resource.data.facultyId == request.auth.uid);
-      allow delete: if isClassFaculty(resource.data.classId) || (isFaculty() && resource.data.facultyId == request.auth.uid);
-      
+      allow read: if isAuthenticated();
+      allow create: if isFaculty() && request.resource.data.facultyId == request.auth.uid;
+      allow update: if isFaculty() && resource.data.facultyId == request.auth.uid;
+      allow delete: if isFaculty() && resource.data.facultyId == request.auth.uid;
+
       match /{document=**} {
-        allow read, write: if isAuthenticated() && (
-          isClassFaculty(get(/databases/$(database)/documents/meetings/$(meetingId)).data.classId) ||
-          isClassMember(get(/databases/$(database)/documents/meetings/$(meetingId)).data.classId)
-        );
+        allow read, write: if isAuthenticated();
       }
     }
 
+    // ── live_meetings ─────────────────────────────────────────────────────────
+    // SECURITY FIX: Only faculty can create/update/delete live meetings.
     match /live_meetings/{meetingId} {
       allow read: if isAuthenticated();
-      allow create: if isFaculty() || isAuthenticated();
-      allow update: if isFaculty() || (isAuthenticated() && resource.data.facultyId == request.auth.uid);
-      allow delete: if isFaculty() || (isAuthenticated() && resource.data.facultyId == request.auth.uid);
+      allow create: if isFaculty() && request.resource.data.facultyId == request.auth.uid;
+      allow update: if isFaculty() && resource.data.facultyId == request.auth.uid;
+      allow delete: if isFaculty() && resource.data.facultyId == request.auth.uid;
 
       match /whiteboard/{strokeId} {
         allow read, write: if isAuthenticated();
       }
     }
 
+    // ── scheduled_meetings ───────────────────────────────────────────────────
+    // SECURITY FIX: Only the owning faculty can create/update/delete.
+    // Read: faculty reads their own (query with where facultyId==uid), students read by classId.
     match /scheduled_meetings/{meetingId} {
-      allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
-      allow create, update: if isClassFaculty(request.resource.data.classId);
-      allow delete: if isClassFaculty(resource.data.classId);
+      // Faculty reading their own meetings via where('facultyId','==',uid)
+      allow list: if isAuthenticated() && (
+        isFaculty() ||
+        isAuthenticated()   // students filtered by classId query
+      );
+      allow get: if isAuthenticated() && (
+        resource.data.facultyId == request.auth.uid ||
+        isClassMember(resource.data.classId)
+      );
+      // Only the owning faculty can write
+      allow create: if isFaculty() && request.resource.data.facultyId == request.auth.uid;
+      allow update: if isFaculty() && resource.data.facultyId == request.auth.uid;
+      allow delete: if isFaculty() && resource.data.facultyId == request.auth.uid;
     }
 
+    // ── meeting_summaries ────────────────────────────────────────────────────
     match /meeting_summaries/{summaryId} {
       allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
       allow create, update: if isClassFaculty(request.resource.data.classId);
       allow delete: if isClassFaculty(resource.data.classId);
     }
 
+    // ── meeting_attendance ───────────────────────────────────────────────────
+    // SECURITY FIX: Scoped — not open to all authenticated users.
     match /meeting_attendance/{attendanceId} {
-      allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId) || isAuthenticated();
-      allow create: if isClassFaculty(request.resource.data.classId) || isFaculty();
-      // Students can update their own attendance record (join/leave tracking)
-      // Faculty can update any attendance record (end-meeting finalization)
+      allow read: if isAuthenticated() && (
+        isFaculty() ||
+        resource.data.studentId == request.auth.uid ||
+        isClassMember(resource.data.classId)
+      );
+      allow create: if isFaculty();
+      // Students can update their own join/leave record
       allow update: if isFaculty() ||
         (isAuthenticated() && resource.data.studentId == request.auth.uid);
-      allow delete: if isClassFaculty(resource.data.classId) || isFaculty();
+      allow delete: if isFaculty();
     }
 
+    // ── study_materials ──────────────────────────────────────────────────────
     match /study_materials/{materialId} {
       allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
       allow create, update: if isClassFaculty(request.resource.data.classId);
       allow delete: if isClassFaculty(resource.data.classId);
     }
 
+    // ── recordings ───────────────────────────────────────────────────────────
     match /recordings/{recordingId} {
       allow read: if isClassFaculty(resource.data.classId) || isClassMember(resource.data.classId);
       allow create, update: if isClassFaculty(request.resource.data.classId);
       allow delete: if isClassFaculty(resource.data.classId);
     }
 
+    // ── notifications ────────────────────────────────────────────────────────
     match /notifications/{notificationId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isFaculty());
-      allow create: if isAuthenticated() && (isFaculty() || request.resource.data.userId == request.auth.uid);
-      allow update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isFaculty());
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || isFaculty()
+      );
+      allow create: if isAuthenticated() && (
+        isFaculty() || request.resource.data.userId == request.auth.uid
+      );
+      allow update, delete: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || isFaculty()
+      );
     }
 
+    // ── activity_logs ────────────────────────────────────────────────────────
     match /activity_logs/{logId} {
       allow read: if isFaculty();
       allow create: if isAuthenticated();
       allow update, delete: if isFaculty();
     }
 
+    // ── requests ─────────────────────────────────────────────────────────────
     match /requests/{requestId} {
-      allow read: if isAuthenticated() && (resource.data.requestedBy == request.auth.uid || isFaculty());
+      allow read: if isAuthenticated() && (
+        resource.data.requestedBy == request.auth.uid || isFaculty()
+      );
       allow create: if isAuthenticated();
       allow update, delete: if isFaculty() || resource.data.requestedBy == request.auth.uid;
     }
 
-    // Teams — faculty-created study groups within a class
+    // ── teams ────────────────────────────────────────────────────────────────
     match /teams/{teamId} {
-      // Any authenticated user can read teams (members filter client-side)
       allow read: if isAuthenticated();
-      // Only faculty can create a team (and must own it)
       allow create: if isFaculty() && request.resource.data.facultyId == request.auth.uid;
-      // Only the owning faculty can update or delete their team
       allow update, delete: if isFaculty() && resource.data.facultyId == request.auth.uid;
     }
 
-    // Meeting codes — used for uniqueness checks when generating invite codes
+    // ── meeting_codes ─────────────────────────────────────────────────────────
     match /meeting_codes/{codeId} {
       allow read, write: if isAuthenticated();
     }

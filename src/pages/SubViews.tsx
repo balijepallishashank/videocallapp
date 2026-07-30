@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, lazy, Suspense } from 'react'
 import { useNavigate, useOutletContext } from 'react-router-dom'
-import { Calendar, Clapperboard, ClipboardCheck, HelpCircle, Link as LinkIcon, Plus, Mic, Trash2 } from 'lucide-react'
+import { AnimatePresence } from 'framer-motion'
+import { Calendar, Clapperboard, ClipboardCheck, HelpCircle, Link as LinkIcon, Plus, Mic, Trash2, CalendarDays } from 'lucide-react'
 import {
   db,
   createClass,
@@ -14,17 +15,21 @@ import {
   saveUserProfile,
   startLiveMeeting,
   endLiveMeeting,
-  createScheduledMeeting,
-  updateScheduledMeeting,
   deleteScheduledMeeting,
+  notifyStudentsOfCancelledMeeting,
   createNotification,
   type LiveMeetingInvite,
+  type ScheduledMeeting,
   subscribeToAllRecordings,
 } from '../services/db'
 import { collection, query, where, getDocs } from 'firebase/firestore'
 import { auth } from '../config/firebase'
 import MeetingHistory from '../features/meeting/MeetingHistory'
 import type { MeetingRecord } from '../features/meeting/MeetingHistory'
+import ScheduledMeetingForm from '../features/scheduling/components/ScheduledMeetingForm'
+import ScheduledMeetingCard from '../features/scheduling/components/ScheduledMeetingCard'
+import { useScheduledMeetings } from '../features/scheduling/hooks/useScheduledMeetings'
+import { useScheduledMeetingPermissions } from '../features/scheduling/hooks/useScheduledMeetingPermissions'
 
 const SettingsPage = lazy(() => import('./SettingsPage'))
 
@@ -635,344 +640,199 @@ export function FacultyMeetingsView() {
 }
 
 export function ScheduledMeetingsView() {
-  const { currentUser, addToast } = useOutletContext<OutletContext>()
+  const { currentUser, addToast, isFaculty } = useOutletContext<OutletContext>()
   const navigate = useNavigate()
 
+  const { meetings, loading } = useScheduledMeetings({ currentUser })
+  const perms = useScheduledMeetingPermissions(currentUser)
+
+  const [showForm, setShowForm] = useState(false)
+  const [editingMeeting, setEditingMeeting] = useState<ScheduledMeeting | null>(null)
   const [classesList, setClassesList] = useState<any[]>([])
-  const [scheduledMeetings, setScheduledMeetings] = useState<any[]>([])
-  const [showFormModal, setShowFormModal] = useState(false)
-  const [editingMeeting, setEditingMeeting] = useState<any | null>(null)
-
-  const [classId, setClassId] = useState('')
-  const [title, setTitle] = useState('')
-  const [date, setDate] = useState('')
-  const [time, setTime] = useState('')
-  const [duration, setDuration] = useState('60')
-  const [description, setDescription] = useState('')
-  const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
-    if (!currentUser) return
+    if (!currentUser || !isFaculty) return
     return subscribeToClasses('faculty', currentUser.id, setClassesList)
-  }, [currentUser])
+  }, [currentUser, isFaculty])
 
-  useEffect(() => {
-    const unsub = subscribeToScheduledMeetings((list) => {
-      const filtered = list.filter((meeting: any) => !currentUser || meeting.facultyId === currentUser.id)
-      setScheduledMeetings(filtered)
-    })
-    return () => unsub()
-  }, [currentUser])
-
-  const handleOpenScheduleModal = (meeting: any | null = null) => {
-    if (meeting) {
-      setEditingMeeting(meeting)
-      setClassId(meeting.classId || '')
-      setTitle(meeting.title || '')
-      const schedDate = new Date(meeting.scheduledDate)
-      setDate(schedDate.toISOString().split('T')[0])
-      setTime(schedDate.toTimeString().slice(0, 5))
-      setDuration(String(meeting.duration || '60'))
-      setDescription(meeting.description || '')
-    } else {
-      setEditingMeeting(null)
-      setClassId('')
-      setTitle('')
-      setDate('')
-      setTime('')
-      setDuration('60')
-      setDescription('')
-    }
-    setShowFormModal(true)
+  const handleEdit = (meeting: ScheduledMeeting) => {
+    setEditingMeeting(meeting)
+    setShowForm(true)
   }
 
-  const handleSaveMeeting = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!classId || !title.trim() || !date || !time || !currentUser) return
-
-    setIsSaving(true)
+  const handleDelete = async (meeting: ScheduledMeeting) => {
+    if (!window.confirm(`Delete "${meeting.title}"? Students will be notified.`)) return
     try {
-      const cls = classesList.find((c) => c.id === classId)
-      if (!cls) throw new Error('Selected class not found.')
-
-      const scheduledAt = new Date(`${date}T${time}`)
-      const endTime = new Date(scheduledAt.getTime() + Number(duration) * 60000)
-
-      const payload = {
-        classId,
-        className: cls.name,
-        title: title.trim(),
-        description: description.trim(),
-        facultyId: currentUser.id,
-        facultyName: currentUser.name,
-        scheduledDate: scheduledAt.toISOString(),
-        startTime: scheduledAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        endTime: endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        duration: Number(duration),
-        status: 'scheduled',
-      }
-
-      if (editingMeeting) {
-        await updateScheduledMeeting(editingMeeting.id, payload as any)
-        addToast('Scheduled meeting updated successfully!', 'success')
-      } else {
-        await createScheduledMeeting(payload as any)
-        addToast('Meeting scheduled successfully!', 'success')
-      }
-
-      setShowFormModal(false)
-    } catch (err) {
-      addToast(err instanceof Error ? err.message : 'Failed to save scheduled meeting.', 'error')
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  const handleDeleteMeeting = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this scheduled meeting?')) return
-    try {
-      await deleteScheduledMeeting(id)
+      await deleteScheduledMeeting(meeting.id)
+      notifyStudentsOfCancelledMeeting(meeting.classId, meeting.id, meeting.title).catch(() => {})
       addToast('Scheduled meeting deleted.', 'success')
     } catch (err) {
-      addToast('Failed to delete meeting.', 'error')
+      addToast(err instanceof Error ? err.message : 'Failed to delete meeting.', 'error')
     }
   }
 
-  const handleStartNow = async (meeting: any) => {
+  const handleStart = async (meeting: ScheduledMeeting) => {
     try {
       await startLiveMeeting(meeting.classId, {
         id: meeting.classId,
         title: meeting.title,
-        sectionName: meeting.className,
+        sectionName: meeting.className || '',
         host: currentUser?.name || 'Faculty',
         invitedStudents: [],
         classId: meeting.classId,
         facultyId: currentUser?.id || '',
         subject: meeting.description || 'Scheduled Lecture',
       })
-      addToast('Meeting started live now!', 'success')
+      addToast('Meeting started!', 'success')
       navigate(`/faculty/class/${meeting.classId}?join=true`)
     } catch (err) {
-      addToast('Failed to start meeting.', 'error')
+      addToast(err instanceof Error ? err.message : 'Failed to start meeting.', 'error')
     }
+  }
+
+  const handleFormClose = () => {
+    setShowForm(false)
+    setEditingMeeting(null)
   }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-3xl font-black text-white">Scheduled Meetings</h1>
-          <p className="mt-1 text-slate-400">Plan and structure future online sessions.</p>
+          <h1 className="text-3xl font-black text-white">
+            {isFaculty ? 'Scheduled Meetings' : 'Upcoming Meetings'}
+          </h1>
+          <p className="mt-1 text-slate-400">
+            {isFaculty
+              ? 'Plan and manage future class sessions.'
+              : 'Upcoming sessions for your enrolled classes.'}
+          </p>
         </div>
-        <button
-          onClick={() => handleOpenScheduleModal()}
-          className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-400 transition"
-        >
-          <Plus className="h-4 w-4" />
-          Schedule Meeting
-        </button>
+        {perms.canCreate && (
+          <button
+            id="schedule-new-meeting-btn"
+            onClick={() => { setEditingMeeting(null); setShowForm(true) }}
+            className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-400 transition"
+          >
+            <Plus className="h-4 w-4" />
+            Schedule Meeting
+          </button>
+        )}
       </div>
 
-      {scheduledMeetings.length === 0 ? (
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-cyan-500 border-t-transparent" />
+        </div>
+      ) : meetings.length === 0 ? (
         <div className="rounded-[2rem] border border-dashed border-white/10 bg-slate-950/40 p-12 text-center flex flex-col items-center justify-center space-y-4">
           <div className="rounded-full bg-slate-900 p-4 border border-white/5">
             <Calendar className="h-8 w-8 text-slate-500" />
           </div>
           <div className="space-y-1">
-            <h3 className="text-lg font-bold text-white">No upcoming meetings</h3>
-            <p className="text-slate-400 max-w-sm text-sm">Schedule lectures or discussions ahead of time. Students will see them on their class dashboard.</p>
+            <h3 className="text-lg font-bold text-white">
+              {isFaculty ? 'No scheduled meetings yet' : 'No upcoming meetings'}
+            </h3>
+            <p className="text-slate-400 max-w-sm text-sm">
+              {isFaculty
+                ? 'Schedule a lecture or discussion ahead of time. Students will see it on their calendar.'
+                : 'Your faculty will schedule meetings here. Check back later.'}
+            </p>
           </div>
-          <button
-            onClick={() => handleOpenScheduleModal()}
-            className="rounded-xl bg-cyan-500/10 border border-cyan-500/20 px-4 py-2 text-sm font-semibold text-cyan-300 hover:bg-cyan-500/20 transition"
-          >
-            Schedule a Meeting
-          </button>
+          {perms.canCreate && (
+            <button
+              onClick={() => { setEditingMeeting(null); setShowForm(true) }}
+              className="rounded-xl bg-cyan-500/10 border border-cyan-500/20 px-4 py-2 text-sm font-semibold text-cyan-300 hover:bg-cyan-500/20 transition"
+            >
+              Schedule a Meeting
+            </button>
+          )}
         </div>
       ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {scheduledMeetings.map((meeting) => (
-            <div key={meeting.id} className="rounded-3xl border border-white/10 bg-slate-950/60 p-6 flex flex-col justify-between space-y-6 hover:border-cyan-500/30 transition animate-fade-in">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="rounded-full bg-cyan-500/15 px-3 py-1 text-xs font-semibold text-cyan-300">
-                    Upcoming
-                  </span>
-                  <span className="text-xs text-slate-400 font-medium">
-                    {meeting.duration} min duration
-                  </span>
-                </div>
-
-                <div>
-                  <h3 className="text-lg font-bold text-white line-clamp-1">{meeting.title}</h3>
-                  <p className="text-sm font-semibold text-cyan-400 mt-0.5">{meeting.className}</p>
-                  {meeting.description && (
-                    <p className="text-xs text-slate-400 mt-2 line-clamp-2 bg-slate-900/40 p-2 rounded-xl border border-white/5">
-                      {meeting.description}
-                    </p>
-                  )}
-                </div>
-
-                <div className="pt-2 border-t border-white/5 grid grid-cols-2 gap-2 text-xs text-slate-400">
-                  <div>
-                    <span className="block text-[10px] uppercase tracking-wide text-slate-500">Date</span>
-                    <span className="font-semibold text-white">
-                      {meeting.scheduledDate ? new Date(meeting.scheduledDate).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) : 'N/A'}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="block text-[10px] uppercase tracking-wide text-slate-500">Time</span>
-                    <span className="font-semibold text-white">
-                      {meeting.startTime || 'N/A'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleStartNow(meeting)}
-                  className="flex-1 rounded-xl bg-cyan-500 py-2 text-center text-xs font-bold text-slate-950 hover:bg-cyan-400 transition"
-                >
-                  Start Now
-                </button>
-                <button
-                  onClick={() => handleOpenScheduleModal(meeting)}
-                  className="rounded-xl border border-white/10 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-900 transition"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => handleDeleteMeeting(meeting.id)}
-                  className="rounded-xl border border-white/10 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-400 hover:bg-red-500/20 transition flex items-center gap-1.5"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Delete
-                </button>
-              </div>
-            </div>
+          {meetings.map((meeting) => (
+            <ScheduledMeetingCard
+              key={meeting.id}
+              meeting={meeting}
+              isFaculty={isFaculty}
+              onEdit={perms.canEdit(meeting) ? handleEdit : undefined}
+              onDelete={perms.canDelete(meeting) ? handleDelete : undefined}
+              onStart={perms.canStart(meeting) ? handleStart : undefined}
+            />
           ))}
         </div>
       )}
 
-      {showFormModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-slate-950 p-6 md:p-8 shadow-2xl space-y-6">
-            <div>
-              <h2 className="text-2xl font-black text-white">
-                {editingMeeting ? 'Edit Scheduled Meeting' : 'Schedule Class Meeting'}
-              </h2>
-              <p className="text-slate-400 text-sm mt-1">Set the date and details for this session.</p>
-            </div>
-
-            <form onSubmit={handleSaveMeeting} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Select Class</label>
-                <select
-                  required
-                  value={classId}
-                  onChange={(e) => setClassId(e.target.value)}
-                  disabled={!!editingMeeting}
-                  className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500/50 disabled:opacity-50"
-                >
-                  <option value="">-- Choose Class --</option>
-                  {classesList.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} ({c.subject})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Meeting Title</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Chapter 3 Review Session"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Date</label>
-                  <input
-                    type="date"
-                    required
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500/50"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Time</label>
-                  <input
-                    type="time"
-                    required
-                    value={time}
-                    onChange={(e) => setTime(e.target.value)}
-                    className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500/50"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Duration (Minutes)</label>
-                <input
-                  type="number"
-                  required
-                  min="5"
-                  max="480"
-                  value={duration}
-                  onChange={(e) => setDuration(e.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500/50"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Description</label>
-                <textarea
-                  placeholder="Topic guidelines, syllabus cover, etc."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  rows={3}
-                  className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50 resize-none"
-                />
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowFormModal(false)}
-                  className="flex-1 rounded-2xl border border-white/10 bg-slate-950 py-3 text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="flex-1 rounded-2xl bg-cyan-500 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-400 transition disabled:opacity-50"
-                >
-                  {isSaving ? 'Saving...' : 'Save Schedule'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {showForm && isFaculty && (
+          <ScheduledMeetingForm
+            editingMeeting={editingMeeting}
+            classesList={classesList}
+            currentUser={currentUser}
+            onSave={() => handleFormClose()}
+            onClose={handleFormClose}
+            addToast={addToast}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }
 
 export function JoinMeetingView() {
+  const { currentUser } = useOutletContext<OutletContext>()
   const navigate = useNavigate()
-  useEffect(() => {
-    navigate('/student/classes', { replace: true })
-  }, [navigate])
-  return null
+  const { meetings, loading } = useScheduledMeetings({ currentUser })
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-3xl font-black text-white">Upcoming Meetings</h1>
+          <p className="mt-1 text-slate-400">Scheduled sessions for your enrolled classes.</p>
+        </div>
+        <button
+          onClick={() => navigate('/student/classes')}
+          className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-300 hover:bg-white/10 transition"
+        >
+          <CalendarDays className="h-4 w-4" />
+          My Classes
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-cyan-500 border-t-transparent" />
+        </div>
+      ) : meetings.length === 0 ? (
+        <div className="rounded-[2rem] border border-dashed border-white/10 bg-slate-950/40 p-12 text-center flex flex-col items-center justify-center space-y-4">
+          <div className="rounded-full bg-slate-900 p-4 border border-white/5">
+            <CalendarDays className="h-8 w-8 text-slate-500" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-lg font-bold text-white">No upcoming meetings</h3>
+            <p className="text-slate-400 max-w-sm text-sm">Your faculty hasn't scheduled any sessions yet. Check back soon or visit your classes.</p>
+          </div>
+          <button
+            onClick={() => navigate('/student/classes')}
+            className="rounded-xl bg-cyan-500/10 border border-cyan-500/20 px-4 py-2 text-sm font-semibold text-cyan-300 hover:bg-cyan-500/20 transition"
+          >
+            Go to My Classes
+          </button>
+        </div>
+      ) : (
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {meetings.map((meeting) => (
+            <ScheduledMeetingCard
+              key={meeting.id}
+              meeting={meeting}
+              isFaculty={false}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function MeetingHistoryView() {
